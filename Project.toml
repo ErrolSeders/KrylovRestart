@@ -1,0 +1,22 @@
+name = "KrylovRestart"
+uuid = "6195e0fa-c106-4db2-9652-290d858c91fc"
+version = "0.1.0"
+authors = ["Errol Seders <errolseders@gmail.com>"]
+
+[deps]
+AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"
+Arpack = "7d9fca2a-8960-54d3-9f78-7d1dccf2cb97"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+KrylovKit = "0b1a1467-8014-51b9-945f-bf0ae24f4b77"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+
+[compat]
+AlgebraOfGraphics = "0.11.9"
+Arpack = "0.5.4"
+CairoMakie = "0.15.6"
+KrylovKit = "0.10.2"
+LinearAlgebra = "1.12.0"
+Revise = "3.12.1"
+SparseArrays = "1.12.0"
