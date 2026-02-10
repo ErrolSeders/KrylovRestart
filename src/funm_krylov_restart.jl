@@ -67,7 +67,7 @@ message(::Val{MaxRestarts}) = "Maximum number of restarts reached."
 message(::Val{AbsErrAcc}) = "Absolute error below stopping accuracy."
 message(::Val{UpBndAcc}) = "Upper bound below stopping accuracy."
 message(::Val{AbsErrLinConv}) = "Linear convergence rate of absolute error greater than minimum decay."
-message(::Val{UpBndLinConv}) = "Lienar convergence rate upper bound greater than minimum decay."
+message(::Val{UpBndLinConv}) = "Linear convergence rate upper bound greater than minimum decay."
 message(::Val{UpdateAcc}) = "Norm of updates below stopping accuracy."
 message(::Val{M}) where {M} = "Invalid stop code encountered! This should never happen!"
 message(c::StopCode) = message(Val(c))
@@ -180,20 +180,24 @@ function funm_krylov_restart_full(f, A::AbstractArray, b::AbstractVector, p::Par
         if p.bound
             α1, α2 = update_alphas(α1, α2, H)
         end
-
+                    
         if k == 1
-            Hhat = H
+            Hhat = zeros(eltype(H), m + 2, m + 2)
+            Hhat[1:m,1:m] = H
+            Hhat[m+1:m+2,m+1:m+2] = [α1 0.0 ; 1.0 α2]
         else
-            km = size(Hhat)[1]
-            Hhat_expand = zeros(eltype(Hhat), km + m, km + m)
-            Hhat_expand[1:km, 1:km] .= Hhat
+            km = size(Hhat)[1] - 2
+            Hhat_expand = zeros(eltype(Hhat), km + m + 2, km + m + 2)
+            Hhat_expand[1:km, 1:km] .= Hhat[1:km,1:km]
             Hhat_expand[km+1:km+m, km+1:km+m] .= H
             Hhat_expand[((k-1)*m)+1, (k-1)*m] = η_prev
+            Hhat_expand[km+m+1,km+m] = η
+            Hhat_expand[km+m+1:km+m+2,km+m+1:km+m+2] = [α1 0.0 ; 1.0 α2]
             Hhat = Hhat_expand
         end
         η_prev = η
 
-        @views h = f(Hhat)[(k-1)*m+1:k*m, 1]
+        @views h = f(Hhat)[(k-1)*m+1:(k-1)*m+m, 1]
         res.fk .+= β * (Q * h)
 
         stop = stop_conditions(A, α1, β, h, qm, res, p)
