@@ -138,7 +138,7 @@ function update_alphas(α1, α2, H)
         μ = s .|> real |> minimum
         λ = s .|> real |> maximum
     end
-    return min(real(μ), α1), max(real(λ), α2)
+    return min(μ, α1), max(λ, α2)
 end
 
 """
