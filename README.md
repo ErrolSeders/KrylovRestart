@@ -1,6 +1,6 @@
 Implementations of the numerical experiments are in Pluto.jl notebooks.
 
-To run them launch julia
+To run them, launch julia
 
 If Pluto is not installed: 
 ```julia-repl
