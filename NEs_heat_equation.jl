@@ -78,6 +78,9 @@ begin
     exact,_ = exponentiate(Lh,t,u0,issymmetric=true,maxiter=2000, tol=1e-16)
 end
 
+# ╔═╡ 49ba6cfe-7c08-490c-910a-3f1fb3876743
+test = krylov_approx_quad(exp,tLh,u0,40)
+
 # ╔═╡ 840171a2-6bf8-498d-b6dc-1a65832728ba
 p = Params(100,200,1e-16,true,nothing,0.95)
 
@@ -121,10 +124,10 @@ function benchmark_function(funm_krylov, f, A, b, ps, exact)
 end
 
 # ╔═╡ 33bfe229-97a7-4a6e-bab0-c79667ecf783
-ra_times,ra_allocs,ra_errs,ra_mvps,ra_restarts = benchmark_function(funm_krylov_restart_ra, r, tLh, u0, ps, exact)
+ra_times,ra_allocs,ra_errs,ra_mvps,ra_restarts = benchmark_function(krylov_approx, r, tLh, u0, ps, exact)
 
 # ╔═╡ d2b073a4-e592-499a-850d-d5d19f1a3934
-full_times,full_allocs,full_errs,full_mvps,full_restarts = benchmark_function(funm_krylov_restart_full, exp, tLh, u0, ps, exact)
+full_times,full_allocs,full_errs,full_mvps,full_restarts = benchmark_function(krylov_approx, exp, tLh, u0, ps, exact)
 
 # ╔═╡ fecf35f6-ff24-4efe-b270-6d706a0ade64
 df_ra = DataFrame([ra_times,ra_allocs * 1e-6,ra_errs,[p.restart_length for p ∈ ps],ra_mvps,ra_restarts],[:Times,:Allocations,:Absolute_Errors,:Restart_Length,:MVPs,:Restarts])
@@ -360,7 +363,7 @@ Tullio = "~0.3.8"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.12.4"
+julia_version = "1.12.6"
 manifest_format = "2.0"
 project_hash = "3ffca3f9beff64050003085d8f877f11e5a0c2de"
 
@@ -2113,6 +2116,7 @@ version = "4.1.0+0"
 # ╠═5b79b13d-2e93-4392-954b-b08cbaebf826
 # ╠═91861fc6-920e-40cf-96bc-25950a76118c
 # ╠═5a301749-be5f-47f5-816c-092b8af79499
+# ╠═49ba6cfe-7c08-490c-910a-3f1fb3876743
 # ╠═840171a2-6bf8-498d-b6dc-1a65832728ba
 # ╠═5d21711c-6749-4c2a-be35-945596799fe5
 # ╠═0b59db71-7742-40d9-a3a3-791d427d383f
