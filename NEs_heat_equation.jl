@@ -78,17 +78,44 @@ begin
     exact,_ = exponentiate(Lh,t,u0,issymmetric=true,maxiter=2000, tol=1e-16)
 end
 
-# ╔═╡ 49ba6cfe-7c08-490c-910a-3f1fb3876743
-test = krylov_approx_quad(exp,tLh,u0,40)
-
 # ╔═╡ 840171a2-6bf8-498d-b6dc-1a65832728ba
-p = Params(100,200,1e-16,true,nothing,0.95)
+p = (; restart_length = 100, max_restarts = 200, stop_accuracy = 1e-16, bound = true, exact = nothing, min_decay = 0.95)
 
 # ╔═╡ 5d21711c-6749-4c2a-be35-945596799fe5
-ps = [Params(m,200,1e-16,true,nothing,0.95) for m ∈ 20:2:100]
+ps = [(; restart_length = m, max_restarts = 200, stop_accuracy = 1e-16, bound = true, exact = nothing, min_decay = 0.95) for m ∈ 20:2:100]
 
 # ╔═╡ 0b59db71-7742-40d9-a3a3-791d427d383f
-r = bestapprox_expm_data(16)
+begin
+	r = bestapprox_expm_data(16)
+	
+	funm_krylov_restart_ra(r, A, b, p) = begin
+		tr = KrylovTrace()
+		fk = krylov_approx(
+			r, A, b, p.restart_length;
+			max_restarts = p.max_restarts,
+			tol = p.stop_accuracy,
+			bound = p.bound,
+			exact = p.exact,
+			min_decay = p.min_decay,
+			trace = tr,
+		)
+		return fk, tr.stop, tr
+	end
+	
+	funm_krylov_restart_full(f, A, b, p) = begin
+		tr = KrylovTrace()
+		fk = krylov_approx(
+			f, A, b, p.restart_length;
+			max_restarts = p.max_restarts,
+			tol = p.stop_accuracy,
+			bound = p.bound,
+			exact = p.exact,
+			min_decay = p.min_decay,
+			trace = tr,
+		)
+		return fk, tr.stop, tr
+	end
+end
 
 # ╔═╡ 3bf491dd-0dfc-4b35-8700-e7b36f33349b
 function benchmark_function(funm_krylov, f, A, b, ps, exact)
@@ -96,8 +123,17 @@ function benchmark_function(funm_krylov, f, A, b, ps, exact)
 	# Warm-up to avoid initial compile time
 	C = rand(ComplexF64,10,10)
 	d = rand(10)
-	p_warm = Params(5,2,1e-2,true,nothing,0.95)
-	_ = funm_krylov(f,C,d,p_warm)
+	p_warm = (; restart_length = 5, max_restarts = 2, stop_accuracy = 1e-2, bound = true, exact = nothing, min_decay = 0.95)
+	tr_warm = KrylovTrace()
+	_ = funm_krylov(
+		f, C, d, p_warm.restart_length;
+		max_restarts = p_warm.max_restarts,
+		tol = p_warm.stop_accuracy,
+		bound = p_warm.bound,
+		exact = p_warm.exact,
+		min_decay = p_warm.min_decay,
+		trace = tr_warm,
+	)
 
 	times = Float64[]
 	allocs = Int64[]
@@ -105,22 +141,31 @@ function benchmark_function(funm_krylov, f, A, b, ps, exact)
 	mvps = Int64[]
 	restarts = Int64[]
 	for p ∈ ps
-		res, time, alloc, _ = @timed funm_krylov(f,A,b,p)
+		tr = KrylovTrace()
+		fk, time, alloc, _ = @timed funm_krylov(
+			f, A, b, p.restart_length;
+			max_restarts = p.max_restarts,
+			tol = p.stop_accuracy,
+			bound = p.bound,
+			exact = p.exact,
+			min_decay = p.min_decay,
+			trace = tr,
+		)
 
-		if res[2] == KrylovRestart.MaxRestarts
+		if tr.stop == KrylovRestart.MaxRestarts
 			@warn "$(Symbol(funm_krylov)) reached max restarts for restart length $(p.restart_length)"
 		end
 	
-		err = norm(exact - res[1])
+		err = norm(exact - fk)
 
-		append!(errs,err)
+		append!(errs, err)
 		append!(times, time)
-		append!(allocs,alloc)	
-		append!(mvps, (p.restart_length * res[3].num_restarts))
-		append!(restarts, res[3].num_restarts)
+		append!(allocs, alloc)	
+		append!(mvps, (p.restart_length * tr.num_restarts))
+		append!(restarts, tr.num_restarts)
 		
 	end
-	return times,allocs,errs,mvps,restarts
+	return times, allocs, errs, mvps, restarts
 end
 
 # ╔═╡ 33bfe229-97a7-4a6e-bab0-c79667ecf783
@@ -160,7 +205,7 @@ function plot_times(df1,df2,savefig=true)
 end
 
 # ╔═╡ ffb0746b-b236-48b9-90ac-87c68369ada0
-plot_times(df_ra,df_full)
+plot_times(df_ra,df_full,false)
 
 # ╔═╡ 4fd84014-784a-41f8-85d2-e58874bd675a
 function plot_errs(df1,df2,savefig=false)
@@ -188,7 +233,7 @@ function plot_errs(df1,df2,savefig=false)
 end
 
 # ╔═╡ bb593070-68fc-442b-97a9-5f1ab8e0d66f
-plot_errs(df_ra,df_full)
+plot_errs(df_ra,df_full,false)
 
 # ╔═╡ 41ee5b8e-ebb6-4fb9-9abf-40e64db155ae
 function plot_allocations(df1,df2,savefig=false)
@@ -213,7 +258,7 @@ function plot_allocations(df1,df2,savefig=false)
 end
 
 # ╔═╡ 1c3a66a1-109d-407e-8a31-87754fb584f2
-plot_allocations(df_ra,df_full)
+plot_allocations(df_ra,df_full,false)
 
 # ╔═╡ ed18a413-19c0-476c-bb4c-0c76d2731190
 function plot_restarts(df1,df2,savefig=false)
@@ -238,7 +283,7 @@ function plot_restarts(df1,df2,savefig=false)
 end
 
 # ╔═╡ 92450224-1ad7-4414-ba33-63ca926779d3
-plot_restarts(df_ra,df_full)
+plot_restarts(df_ra,df_full,false)
 
 # ╔═╡ da71ad33-ffd0-44af-b78b-883fb1e387c3
 function build_df(ps,rs)
@@ -267,13 +312,13 @@ function test_and_plot(r, f, A, b, restart_length, exact)
 	# Warm-up to avoid initial compile time
 	C = rand(ComplexF64,10,10)
 	d = rand(10)
-	p_warm = Params(5,2,1e-2,true,nothing,0.95)
-	_ = funm_krylov_restart_ra(r,C,d,p_warm)
-	_ = funm_krylov_restart_full(f,C,d,p_warm)
+	p_warm = (; restart_length = 5, max_restarts = 2, stop_accuracy = 1e-2, bound = true, exact = nothing, min_decay = 0.95)
+	_ = funm_krylov_restart_ra(r, C, d, p_warm)
+	_ = funm_krylov_restart_full(f, C, d, p_warm)
 	stop_acc = 1e-16
 
-	p_exact = Params(restart_length,50,stop_acc,false,exact,0.95)
-	p_bound = Params(restart_length,50,stop_acc,true,nothing,0.95)
+	p_exact = (; restart_length = restart_length, max_restarts = 50, stop_accuracy = stop_acc, bound = false, exact = exact, min_decay = 0.95)
+	p_bound = (; restart_length = restart_length, max_restarts = 50, stop_accuracy = stop_acc, bound = true, exact = nothing, min_decay = 0.95)
 
 	out_exact_ra = funm_krylov_restart_ra(r,A,b,p_exact)
 	out_bound_ra =  funm_krylov_restart_ra(r,A,b,p_bound)
@@ -2116,7 +2161,6 @@ version = "4.1.0+0"
 # ╠═5b79b13d-2e93-4392-954b-b08cbaebf826
 # ╠═91861fc6-920e-40cf-96bc-25950a76118c
 # ╠═5a301749-be5f-47f5-816c-092b8af79499
-# ╠═49ba6cfe-7c08-490c-910a-3f1fb3876743
 # ╠═840171a2-6bf8-498d-b6dc-1a65832728ba
 # ╠═5d21711c-6749-4c2a-be35-945596799fe5
 # ╠═0b59db71-7742-40d9-a3a3-791d427d383f

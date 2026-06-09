@@ -5,6 +5,12 @@ using Test
 
 const KR = KrylovRestart
 
+run_krylov(args...; kwargs...) = begin
+    tr = KR.KrylovTrace()
+    fk = KR.krylov_approx(args...; trace = tr, kwargs...)
+    return fk, tr
+end
+
 @testset "KrylovRestart" begin
     Random.seed!(1234)
 
@@ -61,17 +67,17 @@ const KR = KrylovRestart
         M = randn(n, n)
         Aherm = 0.05 .* (M + M') / 2
         b = randn(n)
-        fk, stop, _res = KR.krylov_approx(exp, Aherm, b, 5; max_restarts = 60, tol = 1.0e-12, bound = false)
+        fk, tr = run_krylov(exp, Aherm, b, 5; max_restarts = 60, tol = 1.0e-12, bound = false)
         exact = exp(Matrix(Aherm)) * b
-        @test stop != KR.MaxRestarts
+        @test tr.stop != KR.MaxRestarts
         @test norm(fk - exact) / norm(exact) ≤ 1.0e-8
 
         # Non-Hermitian path (Arnoldi)
         Anon = 0.05 .* randn(n, n)
         c = randn(n)
-        fk2, stop2, _res2 = KR.krylov_approx(exp, Anon, c, 6; max_restarts = 80, tol = 1.0e-12, bound = false)
+        fk2, tr2 = run_krylov(exp, Anon, c, 6; max_restarts = 80, tol = 1.0e-12, bound = false)
         exact2 = exp(Matrix(Anon)) * c
-        @test stop2 != KR.MaxRestarts
+        @test tr2.stop != KR.MaxRestarts
         @test norm(fk2 - exact2) / norm(exact2) ≤ 1.0e-8
     end
 
@@ -90,54 +96,54 @@ const KR = KrylovRestart
         d = randn(n)
 
         @testset "sin" begin
-            fkH, stopH, _ = KR.krylov_approx(sin, Aherm, b, 6; max_restarts = 100, tol = 1.0e-12, bound = false)
+            fkH, trH = run_krylov(sin, Aherm, b, 6; max_restarts = 100, tol = 1.0e-12, bound = false)
             exactH = sin(Matrix(Aherm)) * b
-            @test stopH != KR.MaxRestarts
+            @test trH.stop != KR.MaxRestarts
             @test norm(fkH - exactH) / norm(exactH) ≤ 1.0e-8
 
-            fkN, stopN, _ = KR.krylov_approx(sin, Anon, c, 6; max_restarts = 120, tol = 1.0e-12, bound = false)
+            fkN, trN = run_krylov(sin, Anon, c, 6; max_restarts = 120, tol = 1.0e-12, bound = false)
             exactN = sin(Matrix(Anon)) * c
-            @test stopN != KR.MaxRestarts
+            @test trN.stop != KR.MaxRestarts
             @test norm(fkN - exactN) / norm(exactN) ≤ 1.0e-8
         end
 
         @testset "cos" begin
-            fkH, stopH, _ = KR.krylov_approx(cos, Aherm, b, 6; max_restarts = 100, tol = 1.0e-12, bound = false)
+            fkH, trH = run_krylov(cos, Aherm, b, 6; max_restarts = 100, tol = 1.0e-12, bound = false)
             exactH = cos(Matrix(Aherm)) * b
-            @test stopH != KR.MaxRestarts
+            @test trH.stop != KR.MaxRestarts
             @test norm(fkH - exactH) / norm(exactH) ≤ 1.0e-8
 
-            fkN, stopN, _ = KR.krylov_approx(cos, Anon, c, 6; max_restarts = 120, tol = 1.0e-12, bound = false)
+            fkN, trN = run_krylov(cos, Anon, c, 6; max_restarts = 120, tol = 1.0e-12, bound = false)
             exactN = cos(Matrix(Anon)) * c
-            @test stopN != KR.MaxRestarts
+            @test trN.stop != KR.MaxRestarts
             @test norm(fkN - exactN) / norm(exactN) ≤ 1.0e-8
         end
 
         @testset "polynomial" begin
             f(A) = A^3 + 0.25 * A + I
 
-            fkH, stopH, _ = KR.krylov_approx(f, Aherm, b, 6; max_restarts = 100, tol = 1.0e-12, bound = false)
+            fkH, trH = run_krylov(f, Aherm, b, 6; max_restarts = 100, tol = 1.0e-12, bound = false)
             exactH = f(Matrix(Aherm)) * b
-            @test stopH != KR.MaxRestarts
+            @test trH.stop != KR.MaxRestarts
             @test norm(fkH - exactH) / norm(exactH) ≤ 1.0e-8
 
-            fkN, stopN, _ = KR.krylov_approx(f, Anon, c, 6; max_restarts = 120, tol = 1.0e-12, bound = false)
+            fkN, trN = run_krylov(f, Anon, c, 6; max_restarts = 120, tol = 1.0e-12, bound = false)
             exactN = f(Matrix(Anon)) * c
-            @test stopN != KR.MaxRestarts
+            @test trN.stop != KR.MaxRestarts
             @test norm(fkN - exactN) / norm(exactN) ≤ 1.0e-8
         end
 
         @testset "sqrt (SPD)" begin
-            fk, stop, _ = KR.krylov_approx(sqrt, Aspd, d, 6; max_restarts = 120, tol = 1.0e-12, bound = false)
+            fk, tr = run_krylov(sqrt, Aspd, d, 6; max_restarts = 120, tol = 1.0e-12, bound = false)
             exact = sqrt(Matrix(Aspd)) * d
-            @test stop != KR.MaxRestarts
+            @test tr.stop != KR.MaxRestarts
             @test norm(fk - exact) / norm(exact) ≤ 1.0e-8
         end
 
         @testset "log (SPD)" begin
-            fk, stop, _ = KR.krylov_approx(log, Aspd, d, 6; max_restarts = 120, tol = 1.0e-12, bound = false)
+            fk, tr = run_krylov(log, Aspd, d, 6; max_restarts = 120, tol = 1.0e-12, bound = false)
             exact = log(Matrix(Aspd)) * d
-            @test stop != KR.MaxRestarts
+            @test tr.stop != KR.MaxRestarts
             @test norm(fk - exact) / norm(exact) ≤ 1.0e-8
         end
     end
@@ -148,19 +154,19 @@ const KR = KrylovRestart
         b = randn(n)
 
         # Update-based stopping should trigger immediately for huge tol
-        _fk, stop, _ = KR.krylov_approx(exp, A, b, m; max_restarts = 50, tol = 1.0e9, bound = false)
-        @test stop == KR.UpdateAcc
+        _fk, tr = run_krylov(exp, A, b, m; max_restarts = 50, tol = 1.0e9, bound = false)
+        @test tr.stop == KR.UpdateAcc
 
         # Bound-based stopping should trigger immediately for huge tol (needs m≥2)
-        _fk2, stop2, _ = KR.krylov_approx(exp, A, b, 3; max_restarts = 50, tol = 1.0e9, bound = true)
-        @test stop2 == KR.UpBndAcc
+        _fk2, tr2 = run_krylov(exp, A, b, 3; max_restarts = 50, tol = 1.0e9, bound = true)
+        @test tr2.stop == KR.UpBndAcc
 
-        # Exact-based stopping criterion (the only place we still use Params)
+        # Exact-based stopping criterion
         exact = exp(Matrix(A)) * b
-        p_exact = KR.Params(m, 50, 1.0e9, false, exact, 0.95)
-        _fk3, stop3, res3 = KR.krylov_approx(exp, A, b, p_exact)
-        @test stop3 == KR.AbsErrAcc
-        @test !isempty(res3.errs)
+        tr3 = KR.KrylovTrace()
+        _fk3 = KR.krylov_approx(exp, A, b, m; max_restarts = 50, tol = 1.0e9, bound = false, exact = exact, trace = tr3)
+        @test tr3.stop == KR.AbsErrAcc
+        @test !isempty(tr3.errs)
     end
 
     @testset "RationalApproximation" begin
@@ -181,9 +187,9 @@ const KR = KrylovRestart
             approx = r(Matrix(A), b)
             exact = exp(A) * b
 
-            fk, stop, _res = KR.krylov_approx(r, Matrix(A), b, m; max_restarts = 200, tol = 1.0e-12, bound = false)
+            fk, tr = run_krylov(r, Matrix(A), b, m; max_restarts = 200, tol = 1.0e-12, bound = false)
 
-            @test stop != KR.MaxRestarts
+            @test tr.stop != KR.MaxRestarts
             @test norm(fk - approx) / norm(approx) ≤ 1.0e-10
             @test norm(fk - exact) / norm(exact) ≤ 1.0e-10
         end
@@ -201,9 +207,9 @@ const KR = KrylovRestart
             approx = r(A, b)
             exact = exp(A) * b
 
-            fk, stop, _res = KR.krylov_approx(r, A, b, m; max_restarts = 250, tol = 1.0e-12, bound = false)
+            fk, tr = run_krylov(r, A, b, m; max_restarts = 250, tol = 1.0e-12, bound = false)
 
-            @test stop != KR.MaxRestarts
+            @test tr.stop != KR.MaxRestarts
             @test norm(fk - approx) / norm(approx) ≤ 1.0e-10
             @test norm(fk - exact) / norm(exact) ≤ 1.0e-10
         end

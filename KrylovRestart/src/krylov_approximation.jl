@@ -1,132 +1,13 @@
 """
-	Params(restart_length, max_restarts, stop_accuracy, bound, exact, min_decay)
-Parameters for the restarted Krylov subspace methods:
-`restart_length`: Number of iterates in each arnoldi/lanczos run
-`max_restarts`: Maximum number of restarts
-`stop_accuracy`: Accuracy tolerance used to determine stopping, what this parameter means depends on stopping condition.
-`bound`: Compute upper and lower error bounds and stop according to their value.
-`exact`: Provided exact value of f(A)b. If provided then absolute error between iterates and exact value is used as the stopping condition
-`min_decay`: Stop if the linear convergence rate of the upper error bound or absolute error exceeds this number.
+    krylov_approx(f, A, b; m=30, max_restarts=200, tol=nothing, bound=true, exact=nothing,
+                 min_decay=0.95, trace=nothing, callback=nothing)
 
-If `bound` is `false` and `exact` is `nothing` then the algorithm is stopped when the norm of iterate updates is less than `stop_accuracy`
+Restarted Krylov approximation of `f(A)b` (Alg. 1) or `r(A)b` for a `RationalApproximation` (Alg. 2).
+
+The default API returns only the approximation vector and does not store per-restart history.
+To collect convergence information for experiments, pass `trace=KrylovTrace()` and/or a
+`callback(info)` function (e.g. to save iterates, plot errors, etc.).
 """
-struct Params{T <: AbstractFloat, S <: Int}
-    restart_length
-    max_restarts
-    stop_accuracy
-    bound
-    exact
-    min_decay
-    function Params{T, S}(rl, mr, sa, bnd, ex, md) where {T <: AbstractFloat, S <: Int}
-        if !isnothing(ex) && bnd
-            @warn "Both exact solution provided and bound set true!"
-        end
-
-        return new(rl, mr, sa, bnd, ex, md)
-    end
-end
-
-Params(
-    rl::S,
-    mr::S,
-    sa::T,
-    bnd::Bool,
-    ex::Union{Nothing, AbstractVector},
-    md::T
-) where {T <: AbstractFloat, S <: Int} =
-    Params{T, S}(rl, mr, sa, bnd, ex, md)
-
-
-@enum StopCode begin
-    MaxRestarts #0
-    AbsErrAcc #1
-    UpBndAcc #2
-    AbsErrLinConv #3
-    UpBndLinConv #4
-    UpdateAcc #5
-end
-
-mutable struct Results{T <: AbstractFloat}
-    fk::AbstractVector
-    num_restarts::Int64
-    lowbnd::AbstractVector{T}
-    upbnd::AbstractVector{T}
-    errs::AbstractVector{T}
-end
-
-Results{T}(fk_init::AbstractVector) where {T <: AbstractFloat} = Results(
-    fk_init,
-    0,
-    Vector{T}(undef, 0),
-    Vector{T}(undef, 0),
-    Vector{T}(undef, 0)
-)
-
-message(::Val{MaxRestarts}) = "Maximum number of restarts reached."
-message(::Val{AbsErrAcc}) = "Absolute error below stopping accuracy."
-message(::Val{UpBndAcc}) = "Upper bound below stopping accuracy."
-message(::Val{AbsErrLinConv}) = "Linear convergence rate of absolute error greater than minimum decay."
-message(::Val{UpBndLinConv}) = "Linear convergence rate upper bound greater than minimum decay."
-message(::Val{UpdateAcc}) = "Norm of updates below stopping accuracy."
-message(::Val{M}) where {M} = "Invalid stop code encountered! This should never happen!"
-message(c::StopCode) = message(Val(c))
-
-"""
-Checks whether the entries of v are of the form 1,...,1,0,...0,1,1 (i.e., last two entries are true/1, but not all entries are true/1)
-"""
-function check_stop_condition(v)
-    if length(v) < 2
-        return false
-    end
-
-    if all(v[(end - 1):end]) && !all(v)
-        return true
-    end
-
-    return false
-end
-
-"""
-Check whether to stop according to the provided parameters.
-If `exact` is provided then absolute error is used.
-Then, if `bound` is true the upper error bound estimate is used.
-Lastly, if neither is set, the norm of the iteration updates is used.
-"""
-function stop_conditions(A, α1, β, h, qm, res::Results, p::Params)::Union{StopCode, Nothing}
-
-    not_using_exact = isnothing(p.exact) || isempty(p.exact)
-
-    if p.bound
-
-        append!(res.lowbnd, β * abs(h[end - 1]))
-        w = A * qm
-        append!(res.upbnd, β * norm((h[end - 1] - α1 * h[end]) * qm + h[end] * w))
-
-        if length(res.upbnd) > 2 && check_stop_condition(
-                res.upbnd[2:end] ./ res.upbnd[1:(end - 1)] .> p.min_decay
-            )
-            return UpBndLinConv
-        end
-        if res.upbnd[end] < p.stop_accuracy
-            return UpBndAcc
-        end
-
-    elseif !not_using_exact
-        append!(res.errs, norm(res.fk - p.exact))
-
-        if length(res.errs) > 2 && check_stop_condition(res.errs[2:end] ./ res.errs[1:(end - 1)] .> p.min_decay)
-            return AbsErrLinConv
-        end
-
-        if res.errs[end] < p.stop_accuracy
-            return AbsErrAcc
-        end
-    elseif β * norm(h) < p.stop_accuracy
-        return UpdateAcc
-    end
-
-    return nothing
-end
 
 function update_alphas(α1, α2, H)
 
@@ -141,49 +22,71 @@ function update_alphas(α1, α2, H)
 end
 
 
-function krylov_approx(f, A::AbstractArray, b::AbstractVector, m::S; max_restarts::S = 200, tol = eps(eltype(A)), bound = true, min_decay::T = 0.95) where {T <: AbstractFloat, S <: Int}
-    p = Params(m, max_restarts, tol, bound, nothing, min_decay)
-    return krylov_approx(f, A, b, p)
-end
-
+krylov_approx(f, A::AbstractArray, b::AbstractVector, m::Integer; kwargs...) =
+    krylov_approx(f, A, b; m = Int(m), kwargs...)
 
 """
-	krylov_approx(f, A, b, p)
+    krylov_approx(f, A, b; m=30, max_restarts=200, tol=nothing, bound=true, exact=nothing,
+                 min_decay=0.95, trace=nothing, callback=nothing)
 
+Compute `f(A)b` in the manner corresponding to Alg. 1 in the paper.
 
-Compute ``f(A)b`` in the manner corresponding to Alg. 1 in the paper \\
-
-The function `f` must be callable for Matrix arguments.
+If `trace::KrylovTrace` is provided, it is filled with per-restart statistics.
+If `callback` is provided, it is called once per restart as `callback(info)` where
+`info` is a named tuple containing the measured stopping quantity (and `stop` if triggered).
 """
-function krylov_approx(f::Function, A::AbstractArray, b::AbstractVector, p::Params)
+function krylov_approx(
+        f::Function,
+        A::AbstractArray,
+        b::AbstractVector;
+        m::Int = 30,
+        max_restarts::Int = 200,
+        tol = nothing,
+        bound::Bool = true,
+        exact::Union{Nothing, AbstractVector} = nothing,
+        min_decay = 0.95,
+        trace::Union{Nothing, KrylovTrace} = nothing,
+        callback = nothing
+    )
 
-    if p.bound
-        α1 = prevfloat(Inf)
-        α2 = nextfloat(-Inf)
+    if !isnothing(exact) && bound
+        @warn "Both `exact` provided and `bound=true`; stopping will use bounds."
+    end
+    m < 1 && throw(ArgumentError("m must be ≥ 1"))
+
+    Tdefault = float(real(eltype(A)))
+    tolT = tol === nothing ? eps(Tdefault) : float(tol)
+    TT = typeof(tolT)
+    tolT = TT(tolT)
+    min_decayT = TT(min_decay)
+
+    # state for the linear-convergence-based stopping rules
+    up_decay = DecayTracker(TT)
+    err_decay = DecayTracker(TT)
+
+    α1, α2 = if bound
+        prevfloat(Tdefault(Inf)), nextfloat(Tdefault(-Inf))
     else
-        α1 = 0.0
-        α2 = 0.0
+        zero(Tdefault), zero(Tdefault)
     end
 
-    res = Results{Float64}(zeros(eltype(A), length(b)))
-
-    m = p.restart_length
+    fk = zeros(promote_type(eltype(A), eltype(b)), length(b))
 
     β = norm(b)
     qm = (1 / β) * b
 
-    Hhat = Matrix{eltype(A)}(undef, m, m)
-    η_prev = NaN64
+    Hhat = Matrix{eltype(A)}(undef, 0, 0)
+    η_prev = NaN
 
     is_A_hermitian = ishermitian(A)
 
-    for k in 1:p.max_restarts
+    for k in 1:max_restarts
 
-        res.num_restarts = k
+        set_restart!(trace, k)
 
         (Q, H, η, qm) = is_A_hermitian ? lanczos(A, qm, m) : arnoldi(A, qm, m)
 
-        if p.bound
+        if bound
             α1, α2 = update_alphas(α1, α2, H)
         end
 
@@ -192,7 +95,7 @@ function krylov_approx(f::Function, A::AbstractArray, b::AbstractVector, p::Para
             Hhat[1:m, 1:m] = H
             Hhat[(m + 1):(m + 2), (m + 1):(m + 2)] = [α1 0.0; 1.0 α2]
         else
-            km = size(Hhat)[1] - 2
+            km = size(Hhat, 1) - 2
             Hhat_expand = zeros(eltype(Hhat), km + m + 2, km + m + 2)
             Hhat_expand[1:km, 1:km] .= Hhat[1:km, 1:km]
             Hhat_expand[(km + 1):(km + m), (km + 1):(km + m)] .= H
@@ -204,50 +107,72 @@ function krylov_approx(f::Function, A::AbstractArray, b::AbstractVector, p::Para
         η_prev = η
 
         @views h = f(Hhat)[((k - 1) * m + 1):((k - 1) * m + m), 1]
-        res.fk .+= β * (Q * h)
+        fk .+= β * (Q * h)
 
-        stop = stop_conditions(A, α1, β, h, qm, res, p)
+        stop = stop_conditions!(
+            A, α1, β, h, qm, fk, m,
+            bound, exact, tolT, min_decayT,
+            trace, callback, k,
+            up_decay, err_decay
+        )
 
         if stop !== nothing
-            return res.fk, stop, res
+            set_stop!(trace, stop)
+            return fk
         end
     end
-    return res.fk, MaxRestarts, res
+
+    set_stop!(trace, MaxRestarts)
+    return fk
 end
 
+krylov_approx(r::RationalApproximation, A::AbstractArray, b::AbstractVector, m::Integer; kwargs...) =
+    krylov_approx(r, A, b; m = Int(m), kwargs...)
+
 """
-	krylov_approx(r, A, b, p)
+    krylov_approx(r::RationalApproximation, A, b; m=30, max_restarts=200, tol=nothing, bound=true,
+                 exact=nothing, min_decay=0.95, trace=nothing, callback=nothing)
 
-
-Compute ``r(A)b ≈ f(A)b`` in the manner corresponding to Alg. 2 in the paper \\
+Compute `r(A)b ≈ f(A)b` in the manner corresponding to Alg. 2 in the paper.
 """
-function krylov_approx(r::RationalApproximation, A::AbstractArray, b::AbstractVector, p::Params)
+function krylov_approx(
+        r::RationalApproximation,
+        A::AbstractArray,
+        b::AbstractVector;
+        m::Int = 30,
+        max_restarts::Int = 200,
+        tol = nothing,
+        bound::Bool = true,
+        exact::Union{Nothing, AbstractVector} = nothing,
+        min_decay = 0.95,
+        trace::Union{Nothing, KrylovTrace} = nothing,
+        callback = nothing
+    )
 
-    real_res = false
-
-    if (eltype(A) <: AbstractFloat) && (eltype(b) <: AbstractFloat)
-        real_res = true
+    if !isnothing(exact) && bound
+        @warn "Both `exact` provided and `bound=true`; stopping will use bounds."
     end
+    m < 1 && throw(ArgumentError("m must be ≥ 1"))
 
-    m = p.restart_length
+    Tdefault = float(real(eltype(A)))
+    tolT = tol === nothing ? eps(Tdefault) : float(tol)
+    TT = typeof(tolT)
+    tolT = TT(tolT)
+    min_decayT = TT(min_decay)
 
-    if p.bound
+    up_decay = DecayTracker(TT)
+    err_decay = DecayTracker(TT)
+
+    α1, α2 = if bound
         # Set to 'virtually' Inf so that LU does not fail for solves with '\'
-        α1 = prevfloat(Inf)
-        α2 = nextfloat(-Inf)
+        prevfloat(Tdefault(Inf)), nextfloat(Tdefault(-Inf))
     else
-        α1 = 0.0
-        α2 = 0.0
+        zero(Tdefault), zero(Tdefault)
     end
 
-    if real_res
-        fk_init = r.absterm * b
-    else
-        fk_init = complex.(r.absterm * b)
-    end
+    real_res = (eltype(A) <: AbstractFloat) && (eltype(b) <: AbstractFloat)
 
-    res = Results{Float64}(fk_init)
-
+    fk = real_res ? (r.absterm * b) : complex.(r.absterm * b)
 
     β = norm(b)
     qm = (1 / β) * b
@@ -255,25 +180,26 @@ function krylov_approx(r::RationalApproximation, A::AbstractArray, b::AbstractVe
     nr_single = length(r.single_poles)
     poles = [r.single_poles; r.conj_poles]
     coeff = [r.single_coeff; r.conj_coeff]
+
     Bbar = zeros(ComplexF64, m + 2, length(poles))
     Bbar[end - 2, :] .= 1.0 + 0.0im
-    s = 1.0
+    s = one(eltype(Bbar))
 
     e1 = zeros(eltype(A), m + 2)
-    e1[1] = 1.0
+    e1[1] = one(eltype(A))
 
     # H is allocated once
     Hbar = zeros(eltype(A), m + 2, m + 2)
 
     is_A_hermitian = ishermitian(A)
 
-    for k in 1:p.max_restarts
+    for k in 1:max_restarts
 
-        res.num_restarts = k
+        set_restart!(trace, k)
 
         (Q, H, η, qm) = is_A_hermitian ? lanczos(A, qm, m) : arnoldi(A, qm, m)
 
-        if p.bound
+        if bound
             α1, α2 = update_alphas(α1, α2, H)
         end
 
@@ -289,50 +215,145 @@ function krylov_approx(r::RationalApproximation, A::AbstractArray, b::AbstractVe
         end
 
         # contribution from single poles
-        @views h = nr_single > 0 ? Bbar[1:(m + 2), 1:nr_single] * coeff[1:nr_single] : zeros(m + 2)
+        @views h = nr_single > 0 ? Bbar[1:(m + 2), 1:nr_single] * coeff[1:nr_single] : zeros(ComplexF64, m + 2)
 
-        if nr_single < length(poles) #add in the contrabution from the conjugate poles
+        if nr_single < length(poles) # add in the contrabution from the conjugate poles
             @views h .+= 2 * real(Bbar[1:(m + 2), (nr_single + 1):end] * coeff[(nr_single + 1):end])
         end
 
         s = η
 
         if real_res
-            h .|> real
+            h = h .|> real
         end
 
-        @views res.fk .+= β * (Q * h[1:m])
+        @views fk .+= β * (Q * h[1:m])
 
-        stop = stop_conditions(A, α1, β, h, qm, res, p)
+        stop = stop_conditions!(
+            A, α1, β, h, qm, fk, m,
+            bound, exact, tolT, min_decayT,
+            trace, callback, k,
+            up_decay, err_decay
+        )
 
-        if stop != nothing
-            return res.fk, stop, res
+        if stop !== nothing
+            set_stop!(trace, stop)
+            return fk
         end
     end
-    return res.fk, MaxRestarts, res
+
+    set_stop!(trace, MaxRestarts)
+    return fk
 end
 
 """
-    contour_quad_nodes(order,R,[c=0.0+0.0im])
-
-Construct Gauss-Legendre quadrature nodes and weights for
-a circular controur intregral
-
-From Γ := t(θ) = c + R*exp(im*θ)
-To x ∈ [-1,1]
-
+    Compute `f(A)b` by continually approximating `f` using the AAA algorithm.
 """
-function contour_quad_nodes(order, R, c = 0.0 + 0.0im)
+function krylov_approx_barycentric(
+        f::Function,
+        A::AbstractArray,
+        b::AbstractVector;
+        m::Int = 30,
+        max_restarts::Int = 200,
+        tol = nothing,
+        exact::Union{Nothing, AbstractVector} = nothing,
+        min_decay = 0.95,
+        trace::Union{Nothing, KrylovTrace} = nothing,
+        callback = nothing
+    )
 
-    ξ, ω = gausslegendre(order)
+    m < 1 && throw(ArgumentError("m must be ≥ 1"))
 
-    θ = π .* ξ
-    expθ = exp.(im .* θ)
+    Tdefault = float(real(eltype(A)))
+    tolT = tol === nothing ? eps(Tdefault) : float(tol)
+    TT = typeof(tolT)
+    tolT = TT(tolT)
+    min_decayT = TT(min_decay)
 
-    x = c .+ R .* expθ
-    w = 0.5 .* ω .* R .* expθ
+    up_decay = DecayTracker(TT)
+    err_decay = DecayTracker(TT)
 
-    return x, w
+    real_res = (eltype(A) <: AbstractFloat) && (eltype(b) <: AbstractFloat)
+
+    β = norm(b)
+    qm = (1 / β) * b
+
+    e1 = zeros(ComplexF64, m + 2)
+    e1[1] = 1.0 + 0.0im
+
+    # H is allocated once
+    Hbar = zeros(eltype(A), m + 2, m + 2)
+
+    is_A_hermitian = ishermitian(A)
+
+    α1, α2 = Inf, -Inf
+
+    Tvec = promote_type(eltype(A), eltype(b))
+    fk = zeros(real_res ? Tvec : ComplexF64, size(A, 1))
+
+    for k in 1:max_restarts
+
+        set_restart!(trace, k)
+
+        (Q, H, η, qm) = is_A_hermitian ? lanczos(A, qm, m) : arnoldi(A, qm, m)
+
+        vals = eigvals(H)
+
+        α1 = min(α1, vals .|> real |> minimum)
+        α2 = max(α2, vals .|> real |> maximum)
+
+        # Include the two extra spectral points that appear in Hbar.
+        vals_aug = vcat(vals, α1, α2)
+        R, c = fetch_contour_shape(vals_aug, 1.1)
+
+        contour = Circle(c, R)
+
+        r = approximate(f, contour)
+
+        Z = r.fun.nodes
+        W = r.fun.weights
+        WF = r.fun.w_times_f
+
+        # H is overwritten in this block
+        Hbar[1:m, 1:m] .= H
+        Hbar[(m + 1):(m + 2), (m + 1):(m + 2)] = [α1 0.0; 1.0 α2]
+        Hbar[m + 1, m] = η
+
+        # Evaluate the AAA barycentric rational on the projected matrix:
+        #   r(M) = (∑_j w_j f_j (z_j I - M)^{-1}) (∑_j w_j (z_j I - M)^{-1})^{-1}
+        # applied to the restart RHS q = e1.
+        q = e1
+        numer = zeros(ComplexF64, m + 2)
+        denom = zeros(ComplexF64, m + 2, m + 2)
+        for j in eachindex(Z)
+            M = Z[j] * I - Hbar
+            Fm = lu(M)
+            numer .+= WF[j] .* (Fm \ q)
+            denom .+= W[j] .* (Fm \ I)
+        end
+        h = denom \ numer
+
+        if real_res
+            h = real.(h)
+        end
+
+        @views fk .+= β * (Q * h[1:m])
+
+        stop = stop_conditions!(
+            A, α1, β, h, qm, fk, m,
+            true, exact, tolT, min_decayT,
+            trace, callback, k,
+            up_decay, err_decay
+        )
+
+        if stop !== nothing
+            set_stop!(trace, stop)
+            return fk
+        end
+    end
+
+    set_stop!(trace, MaxRestarts)
+    return fk
 end
 
 """
@@ -370,22 +391,6 @@ function integral_error_correction(
         S += ω * f(t) * ϕ * y
     end
     return S
-end
-
-"""
-     fetch_contour_shape(H, contour_safety)
-
-Find a radius `R` and center `c` around the Ritz values of `H`
-with a loose tolerance defined by `contour_safety`.
-
-"""
-function fetch_contour_shape(H, contour_safety)
-    vals = eigvals(H)
-    c = sum(vals) / length(vals)
-    dist = maximum(abs.(c .- vals))
-    R = contour_safety * dist
-    R = max(contour_safety, R)
-    return R, c
 end
 
 """

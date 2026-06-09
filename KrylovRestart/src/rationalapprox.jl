@@ -64,6 +64,8 @@ end
 
 Provides the best uniform rational approximation to ``e^A`` on ``(-∞, 0]`` of degree `deg`
 derived from data provided by Richard Varga et. al.
+
+Note that the approximation can be shifted by exp(z)
 """
 function bestapprox_expm_data(deg::Integer)::RationalApproximation
     bestapproximations = Dict(

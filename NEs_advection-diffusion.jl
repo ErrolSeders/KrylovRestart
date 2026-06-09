@@ -188,6 +188,34 @@ end
 # ╔═╡ a347acef-234c-4f3e-aeee-c1491cf543d0
 r = bestapprox_expm_data(16)
 
+funm_krylov_restart_ra(r, A, b, p) = begin
+	tr = KrylovTrace()
+	fk = krylov_approx(
+		r, A, b, p.restart_length;
+		max_restarts = p.max_restarts,
+		tol = p.stop_accuracy,
+		bound = p.bound,
+		exact = p.exact,
+		min_decay = p.min_decay,
+		trace = tr,
+	)
+	return fk, tr.stop, tr
+end
+
+funm_krylov_restart_full(f, A, b, p) = begin
+	tr = KrylovTrace()
+	fk = krylov_approx(
+		f, A, b, p.restart_length;
+		max_restarts = p.max_restarts,
+		tol = p.stop_accuracy,
+		bound = p.bound,
+		exact = p.exact,
+		min_decay = p.min_decay,
+		trace = tr,
+	)
+	return fk, tr.stop, tr
+end
+
 # ╔═╡ 10499a9c-56db-4bf0-b665-a23e5a4af941
 Lhinv = inv(Lh |> Matrix) # This is bad!
 
@@ -196,13 +224,13 @@ exact_input = exp(tLh |> Matrix) * (Lhinv * g)
 
 # ╔═╡ 32ece1f3-6307-4910-8931-1e82de92ea86
 begin
-	p = Params(90,200,10e-16,false,exact_input,0.95)
+	p = (; restart_length = 90, max_restarts = 200, stop_accuracy = 10e-16, bound = false, exact = exact_input, min_decay = 0.95)
 
 	Ainvg = Lhinv * g
 	
 	b = u_0 + Ainvg
 	
-	sol = funm_krylov_restart_full(exp,tLh,b,p)
+	sol = funm_krylov_restart_full(exp, tLh, b, p)
 end
 
 # ╔═╡ 702a9e7d-c6be-428a-bda9-d8f480a30e92
@@ -221,10 +249,19 @@ message(sol[2])
 function benchmark_function(funm_krylov, f, A, b, Ainvg, ps, exact)
 
 	# Warm-up to avoid initial compile time
-	C = rand(ComplexF64,10,10)
+	C = rand(ComplexF64, 10, 10)
 	d = rand(10)
-	p_warm = Params(5,2,1e-2,true,nothing,0.95)
-	_ = funm_krylov(f,C,d,p_warm)
+	p_warm = (; restart_length = 5, max_restarts = 2, stop_accuracy = 1e-2, bound = true, exact = nothing, min_decay = 0.95)
+	tr_warm = KrylovTrace()
+	_ = funm_krylov(
+		f, C, d, p_warm.restart_length;
+		max_restarts = p_warm.max_restarts,
+		tol = p_warm.stop_accuracy,
+		bound = p_warm.bound,
+		exact = p_warm.exact,
+		min_decay = p_warm.min_decay,
+		trace = tr_warm,
+	)
 
 	times = Float64[]
 	allocs = Int64[]
@@ -233,34 +270,43 @@ function benchmark_function(funm_krylov, f, A, b, Ainvg, ps, exact)
 	restarts = Int64[]
 	codes = []
 	for p ∈ ps
-		res, time, alloc, _ = @timed funm_krylov(f,A,b,p)
+		tr = KrylovTrace()
+		fk, time, alloc, _ = @timed funm_krylov(
+			f, A, b, p.restart_length;
+			max_restarts = p.max_restarts,
+			tol = p.stop_accuracy,
+			bound = p.bound,
+			exact = p.exact,
+			min_decay = p.min_decay,
+			trace = tr,
+		)
 
-		if res[2] == KrylovRestart.MaxRestarts
+		if tr.stop == KrylovRestart.MaxRestarts
 			@warn "$(Symbol(funm_krylov)) reached max restarts for restart length $(p.restart_length)"
 		end
 
-		final_res = res[1] - Ainvg
+		final_res = fk - Ainvg
 		
 		err = norm(exact - final_res)
 
-		append!(errs,err)
+		append!(errs, err)
 		append!(times, time)
-		append!(allocs,alloc)	
-		append!(mvps, (p.restart_length * res[3].num_restarts))
-		append!(restarts, res[3].num_restarts)
-		push!(codes, message(res[2]))
+		append!(allocs, alloc)	
+		append!(mvps, (p.restart_length * tr.num_restarts))
+		append!(restarts, tr.num_restarts)
+		push!(codes, message(tr.stop))
 	end
-	return times,allocs,errs,mvps,restarts,codes
+	return times, allocs, errs, mvps, restarts, codes
 end
 
 # ╔═╡ 8f62ee16-3d29-4a97-9e41-99a753de50e0
-ps = [Params(m,40,1e-16,true,nothing,0.95) for m ∈ 30:10:200]
+ps = [(; restart_length = m, max_restarts = 40, stop_accuracy = 1e-16, bound = true, exact = nothing, min_decay = 0.95) for m ∈ 30:10:200]
 
 # ╔═╡ 840783f0-6424-4ba0-9184-218547364c42
-ra_times,ra_allocs,ra_errs,ra_mvps,ra_restarts,ra_codes = benchmark_function(funm_krylov_restart_ra, r, tLh, b, Ainvg, ps, exact_u)
+ra_times, ra_allocs, ra_errs, ra_mvps, ra_restarts, ra_codes = benchmark_function(krylov_approx, r, tLh, b, Ainvg, ps, exact_u)
 
 # ╔═╡ e7514d9d-b500-4e2b-9ac8-9330032032b3
-full_times,full_allocs,full_errs,full_mvps,full_restarts,full_codes = benchmark_function(funm_krylov_restart_full, exp, tLh, b, Ainvg, ps, exact_u)
+full_times, full_allocs, full_errs, full_mvps, full_restarts, full_codes = benchmark_function(krylov_approx, exp, tLh, b, Ainvg, ps, exact_u)
 
 # ╔═╡ 3e45ed4d-b897-42ea-a915-aafa0464799f
 df_ra = DataFrame([ra_times,ra_allocs * 1e-6,ra_errs,[p.restart_length for p ∈ ps],ra_mvps,ra_restarts,ra_errs .< 1.0e-11,ra_codes],[:Times,:Allocations,:Absolute_Errors,:Restart_Length,:MVPs,:Num_Restarts,:converged,:codes])
@@ -421,14 +467,14 @@ function test_and_plot(r, f, A, b, restart_length, exact)
 	# Warm-up to avoid initial compile time
 	C = rand(ComplexF64,10,10)
 	d = rand(10)
-	p_warm = Params(5,2,1e-2,true,nothing,0.95)
-	_ = funm_krylov_restart_ra(r,C,d,p_warm)
-	_ = funm_krylov_restart_full(f,C,d,p_warm)
+	p_warm = (; restart_length = 5, max_restarts = 2, stop_accuracy = 1e-2, bound = true, exact = nothing, min_decay = 0.95)
+	_ = funm_krylov_restart_ra(r, C, d, p_warm)
+	_ = funm_krylov_restart_full(f, C, d, p_warm)
 	
 	stop_acc = 1e-16
 
-	p_exact = Params(restart_length,100,stop_acc,false,exact,0.95)
-	p_bound = Params(restart_length,100,stop_acc,true,nothing,0.95)
+	p_exact = (; restart_length = restart_length, max_restarts = 100, stop_accuracy = stop_acc, bound = false, exact = exact, min_decay = 0.95)
+	p_bound = (; restart_length = restart_length, max_restarts = 100, stop_accuracy = stop_acc, bound = true, exact = nothing, min_decay = 0.95)
 
 	out_exact_ra = funm_krylov_restart_ra(r,A,b,p_exact)
 	out_bound_ra =  funm_krylov_restart_ra(r,A,b,p_bound)
