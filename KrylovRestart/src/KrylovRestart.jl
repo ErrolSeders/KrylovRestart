@@ -23,5 +23,6 @@ export RationalApproximation, bestapprox_expm_data
 export arnoldi, lanczos
 export StopCode, KrylovTrace, krylov_approx, krylov_approx_barycentric
 export krylov_approx_quad, krylov_approx_quad2, message
+export krylov_approx_chen
 
 end # module KrylovRestart

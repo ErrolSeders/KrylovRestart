@@ -37,7 +37,7 @@ function contour_quad_nodes(order, R, c = 0.0 + 0.0im)
     ξ, ω = gausslegendre(order)
 
     θ = π .* ξ
-    expθ = exp.(im .* θ)
+    expθ = θ .|> cis
 
     x = c .+ R .* expθ
     w = 0.5 .* ω .* R .* expθ

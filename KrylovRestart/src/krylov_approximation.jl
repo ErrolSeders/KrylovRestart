@@ -602,3 +602,215 @@ and furthermore `A` to be HPD.
 function krylov_approx_2norm(f, A, b, m)
 
 end
+
+function make_integral_function_chen(f, H, Hs, ηs, R, c, e1)
+
+    m = size(H, 1)
+
+    function F(x, p = nothing)
+
+        # Coordinate transform from [-1,1] to circle contour
+        θ = π * x
+        expθ = exp(im * θ)
+        t = c + R * expθ
+
+        y = (t * I - H) \ e1
+
+        ϕ = one(eltype(H))
+
+        res = Vector{ComplexF64}(undef, m)
+
+        @inbounds for j in eachindex(ηs)
+            ldiv!(res, (t * I - Hs[j]), e1)
+            ϕ *= ηs[j] * res[end]
+        end
+
+        return (0.5 * R * expθ * f(t) * ϕ) * y
+    end
+
+    return F
+end
+
+"""
+Chen dissertation: Lemma 7.8
+"""
+function norm_of_hwz(z, w::Real, a, b)
+    z_re = real(z)
+    z_im = imag(z)
+    left = abs((a - w) / (a - z))
+    right = abs((b - w) / (b - z))
+    x = (z_re^2 + z_im^2 - z_re * w) / (z_re - w)
+    if x >= a && x <= b && z_im != 0
+        middle = abs((1.0 / z_im) * (z - w))
+    else
+        middle = 0
+    end
+
+    @assert middle != NaN
+
+    return max(left, middle, right)
+end
+
+"""
+Implementation of an implicit restarted KSM using an error indicator adapted from Chen et al. and an implicit restarting scheme derived from the cauchy integral form of the KSM approximation
+
+For this algorithm we require that `A` be Hermitian as the error bound is only valid for the Lanczos decomposition.
+The adaptation for the restarted scheme was derived assuming that we have a decomposition as given by Eiermann and Ernst (2006).
+
+This algorithm is rather sensitive to its hyperparameters, we ideally want to choose `w` less than the minimum eigenvalue of `A`. Furthermore, in this algorithm we try determine a countour the fully encloses the eigenvalues of `A` and all subsequent `Tk` in one fell swoop based upon the initial ritz values extracted from `T1`. The ritz values of `T1` should be an okay approximation to the extreme values of `A`. Therefore, we have the variable `contour_safety` which will scale the radius of the circular contour beyond the initial maximum ritz value. A sufficiently large number of quadrature nodes must be choosen as well with `order`.
+
+Two key variables that need to be controlled for this algorithm to work are the value `w` which is a single complex point that we need to choose
+to be disjoint from both the spectrum of `A` and the ritz-values of each `T`.
+We also will need to choose a contour for evaluating an integral such that every value of
+the contour is far away from the spectrum of `A` and ritz-values of each `T`.
+"""
+function krylov_approx_chen(
+        f, A, b, m, w;
+        tol = 1.0e-16,
+        max_restarts = 200,
+        contour_safety = 2.0,
+        order = 80
+    )
+
+    @assert ishermitian(A)
+    n = size(A, 1)
+
+    err = 0.0
+
+    β = norm(b)
+    qm = (1 / β) * b
+
+    (Q, T, η, qm) = lanczos(A, qm, m)
+
+    T = SymTridiagonal(T)
+
+    λs, _ = eigen(T)
+
+    λmax = maximum(λs)
+    λmin = minimum(λs)
+
+    norm_curry = z -> norm_of_hwz(z, w, λmin, λmax)
+
+    #The contour is set once at
+    R, c = fetch_contour_shape(λs, contour_safety)
+    nodes, weights = contour_quad_nodes(order, R, 0.0)
+
+    fval = nodes .|> f
+    absfval = fval .|> abs
+
+    h = f(T)[1, :]
+    fk = β * Q * h
+
+    w_det_accum = (T - w * I) |> logabsdet |> first
+    dets_accum = [(T - node * I) |> logabsdet |> first for node in nodes]
+
+    μs = Vector{ComplexF64}[]
+    μ_coeff = (-1)^m
+    μ_prods = [ones(order)]
+
+    ν = Q' * b
+    νs = [ν]
+
+    ηs = [η]
+    η_prods = [η]
+
+    e1 = zeros(m); e1[1] = 1.0
+    em = zeros(m); em[end] = 1.0
+
+    right_vecs = [hcat([(T - node * I)' \ em for node in nodes]...)]
+
+    k_count = 0
+
+    #Preallocation - Continually write over the same arrays
+    left_vec = Array{ComplexF64}(undef, m, order)
+    right_vec = Array{ComplexF64}(undef, m, order)
+    sol = Array{ComplexF64}(undef, n, order)
+    dets = Array{Tuple{Float64, ComplexF64}}(undef, order)
+
+    for k in 2:max_restarts
+
+        (Q, T, η, qm) = lanczos(A, qm, m)
+
+        ν = Q' * b
+        push!(νs, ν)
+
+        T = SymTridiagonal(T)
+
+        sub_diag = diag(T, -1)
+        sub_diag_prod = prod(sub_diag)
+
+
+        w_det_accum += (T - w * I) |> logabsdet |> first
+
+        for (j, node) in enumerate(nodes)
+            T_shift = (T - node * I)
+            left_vec[:, j] = T_shift \ e1
+            right_vec[:, j] = T_shift' \ em
+            sol[:, j] = weights[j] * Q * (T_shift \ ν)
+            dets[j] = (T_shift) |> logabsdet
+            dets_accum[j] += dets[j] |> first
+        end
+
+        push!(right_vecs, right_vec)
+
+        det_sign = [det[1] for det in dets]
+        inv_logabsdet_val = [-det[2] for det in dets]
+        inv_detval = (μ_coeff * det_sign) .* exp.(inv_logabsdet_val)
+
+        push!(μs, sub_diag_prod .* inv_detval)
+
+        Σ::Array{ComplexF64} = zeros(ComplexF64, size(A, 1), order)
+
+        # print("Q: "); display(Q)
+        # print("right_vec: "); display(right_vecs[1])
+        # print("left_vec: "); display(left_vec)
+        # print("νs: "); display(νs[1])
+        # print("μs: "); display(μs[1])
+
+        for i in 1:(k - 1)
+            coeff = (-1)^(k - i - 1) * prod(ηs[(i + 1):(k - 1)]) * η
+            μ = foldl((.*), μs[(i + 1):(k - 1)], init = ones(order))
+            for j in 1:order
+                Σ[:, j] += weights[j] * fval[j] * coeff * Q * μ[j] * left_vec[:, j] * dot(right_vecs[i][:, j], νs[i])
+            end
+        end
+
+        # display(Σ)
+        # display(sum(Σ, dims = 2))
+        # display(sol)
+
+        h = ((R / 2 * π * im) * (sum(sol, dims = 2) + sum(Σ, dims = 2))) .|> real
+
+        fk .+= h
+
+        push!(ηs, η)
+
+        # print("w_det: "); display(w_det)
+        # print("det: "); display(dets)
+
+        norm_val = nodes .|> norm_curry
+
+        const_factor = (R * im) / (2 * π)
+        # print("det_log_accum: "); display(dets_accum)
+        # print("norm_val: "); display(norm_val)
+        # print("fval: "); display(absfval)
+
+        det_prod = exp.(-dets_accum .+ w_det_accum)
+        # print("det_prod: "); display(det_prod)
+        S = const_factor * dot(weights, absfval .* det_prod .* norm_val)
+
+        if isnan(S)
+            throw(OverflowError("Error bound is NaN, choose a different value for `w`"))
+        end
+
+        @info "err int val: $S"
+        if abs(real(S)) < tol
+            @info "Error bound met"
+            @info k_count
+            return fk
+        end
+        k_count += 1
+    end
+    @info k_count
+    return fk
+end
