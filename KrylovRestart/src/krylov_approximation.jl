@@ -664,7 +664,7 @@ to be disjoint from both the spectrum of `A` and the ritz-values of each `T`.
 We also will need to choose a contour for evaluating an integral such that every value of
 the contour is far away from the spectrum of `A` and ritz-values of each `T`.
 """
-function krylov_approx_chen(
+function krylov_approx_chen_implicit(
         f, A, b, m, w;
         tol = 1.0e-16,
         max_restarts = 200,
@@ -691,16 +691,20 @@ function krylov_approx_chen(
 
     norm_curry = z -> norm_of_hwz(z, w, λmin, λmax)
 
-    #The contour is set once at
+    #The contour is set once based on the initial Ritz values
     R, c = fetch_contour_shape(λs, contour_safety)
-    nodes, weights = contour_quad_nodes(order, R, 0.0)
+    nodes, weights = contour_quad_nodes(order, R, c)
 
     fval = nodes .|> f
     absfval = fval .|> abs
 
+    norm_val = nodes .|> norm_curry
+    const_factor = (R * im) / (2 * π)
+
     h = f(T)[1, :]
     fk = β * Q * h
 
+    # Dets are computed in log-space for numerical stability
     w_det_accum = (T - w * I) |> logabsdet |> first
     dets_accum = [(T - node * I) |> logabsdet |> first for node in nodes]
 
@@ -717,9 +721,8 @@ function krylov_approx_chen(
     e1 = zeros(m); e1[1] = 1.0
     em = zeros(m); em[end] = 1.0
 
+    # eₘᵀ(T - zI)⁻¹ at each quad node
     right_vecs = [hcat([(T - node * I)' \ em for node in nodes]...)]
-
-    k_count = 0
 
     #Preallocation - Continually write over the same arrays
     left_vec = Array{ComplexF64}(undef, m, order)
@@ -761,12 +764,6 @@ function krylov_approx_chen(
 
         Σ::Array{ComplexF64} = zeros(ComplexF64, size(A, 1), order)
 
-        # print("Q: "); display(Q)
-        # print("right_vec: "); display(right_vecs[1])
-        # print("left_vec: "); display(left_vec)
-        # print("νs: "); display(νs[1])
-        # print("μs: "); display(μs[1])
-
         for i in 1:(k - 1)
             coeff = (-1)^(k - i - 1) * prod(ηs[(i + 1):(k - 1)]) * η
             μ = foldl((.*), μs[(i + 1):(k - 1)], init = ones(order))
@@ -775,42 +772,127 @@ function krylov_approx_chen(
             end
         end
 
-        # display(Σ)
-        # display(sum(Σ, dims = 2))
-        # display(sol)
+        update_constant = (R / (2 * π * im))
 
-        h = ((R / 2 * π * im) * (sum(sol, dims = 2) + sum(Σ, dims = 2))) .|> real
-
+        h = (update_constant * (sum(sol, dims = 2) + sum(Σ, dims = 2))) .|> real
         fk .+= h
 
         push!(ηs, η)
 
-        # print("w_det: "); display(w_det)
-        # print("det: "); display(dets)
-
-        norm_val = nodes .|> norm_curry
-
-        const_factor = (R * im) / (2 * π)
-        # print("det_log_accum: "); display(dets_accum)
-        # print("norm_val: "); display(norm_val)
-        # print("fval: "); display(absfval)
-
         det_prod = exp.(-dets_accum .+ w_det_accum)
         # print("det_prod: "); display(det_prod)
-        S = const_factor * dot(weights, absfval .* det_prod .* norm_val)
+        error_indicator = const_factor * dot(weights, absfval .* det_prod .* norm_val)
 
-        if isnan(S)
+        if isnan(error_indicator)
             throw(OverflowError("Error bound is NaN, choose a different value for `w`"))
         end
 
-        @info "err int val: $S"
+
         if abs(real(S)) < tol
             @info "Error bound met"
-            @info k_count
+            @info k
             return fk
         end
-        k_count += 1
     end
-    @info k_count
+    @info "Max Restarts"
+    return fk
+end
+
+"""
+Implementation of an explicit restarted KSM using an error indicator adapted from Chen et al.
+
+Here we contruct the extended block diagonal matrix `That` like in `krylov_approx`. We evaluate the error using quadrature. Because we have access to the full matrix `That` we are able to rebuild our contour every restart based on the current Ritz values of `That`. This allows us to use a lower `order`.
+For this algorithm we require that `A` be Hermitian as the error bound is only valid for the Lanczos decomposition.
+The adaptation for the restarted scheme was derived assuming that we have a decomposition as given by Eiermann and Ernst (2006).
+"""
+function krylov_approx_chen_explicit(
+        f, A, b, m, w;
+        tol = 1.0e-16,
+        max_restarts = 200,
+        contour_safety = 2.0,
+        order = 20,
+        rebuild_contour = true
+    )
+
+    @assert ishermitian(A)
+
+
+    β = norm(b)
+    qm = (1 / β) * b
+
+    (Q, T, η_prev, qm) = lanczos(A, qm, m)
+
+    That = T
+
+    λs, _ = eigen(T)
+
+    λmax = maximum(λs)
+    λmin = minimum(λs)
+
+    R, c = fetch_contour_shape(λs, contour_safety)
+    nodes, weights = contour_quad_nodes(order, R, c)
+
+    norm_curry = z -> norm_of_hwz(z, w, λmin, λmax)
+
+    absfval = nodes .|> (abs ∘ f)
+
+    norm_val = nodes .|> norm_curry
+
+    const_factor = (R * im) / (2 * π)
+
+    fk = β * Q * f(That)[:, 1]
+
+    for k in 2:max_restarts
+
+        (Q, T, η, qm) = lanczos(A, qm, m)
+
+        km = size(That, 1)
+        That_expand = zeros(eltype(That), km + m, km + m)
+        That_expand[1:km, 1:km] .= That[1:km, 1:km]
+        That_expand[(km + 1):(km + m), (km + 1):(km + m)] .= T
+        That_expand[((k - 1) * m) + 1, (k - 1) * m] = η_prev
+        That = That_expand
+
+        η_prev = η
+
+        @views h = f(That)[((k - 1) * m + 1):((k - 1) * m + m), 1]
+        fk .+= β * (Q * h)
+
+        if rebuild_contour
+            λs, _ = eigen(That)
+
+            λmax = maximum(λs)
+            λmin = minimum(λs)
+
+            R, c = fetch_contour_shape(λs, contour_safety)
+            nodes, weights = contour_quad_nodes(order, R, c)
+
+            norm_curry = z -> norm_of_hwz(z, w, λmin, λmax)
+
+            absfval = nodes .|> (abs ∘ f)
+
+            norm_val = nodes .|> norm_curry
+        end
+
+        norm_hwz_T = Array{Float64}(undef, order)
+        det_w = first(logabsdet(That - w * I))
+        for (i, node) in enumerate(nodes)
+            norm_hwz_T[i] = det_w - first(logabsdet(That - node * I))
+        end
+
+        error_indicator = (const_factor * dot(weights, absfval .* exp.(norm_hwz_T) .* norm_val))
+
+        if isnan(error_indicator)
+            throw(OverflowError("Error bound is NaN, choose a different value for `w`"))
+        end
+
+        error_indicator = error_indicator |> real |> abs
+
+        if error_indicator < tol
+            @info k, error_indicator
+            return fk
+        end
+    end
+    @info "Max Restarts"
     return fk
 end
