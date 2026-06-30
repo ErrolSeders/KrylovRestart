@@ -10,7 +10,7 @@ end
 """
 Compute ``r(A)`` for a given rational approximation: ``r(A) ≈ f(A)``
 """
-function (r::RationalApproximation)(A::AbstractArray)::AbstractArray
+function (r::RationalApproximation)(A::AbstractArray)
 
     if issparse(A)
         A = A |> Matrix
@@ -39,7 +39,7 @@ end
 """
 Compute ``r(A)b`` for a given rational approximation: ``r(A)b ≈ f(A)b``
 """
-function (r::RationalApproximation)(A::AbstractArray, b::AbstractVector)::AbstractArray
+function (r::RationalApproximation)(A::AbstractArray, b::AbstractVector)
 
     out = r.absterm * b
 
@@ -67,7 +67,7 @@ derived from data provided by Richard Varga et. al.
 
 Note that the approximation can be shifted by exp(z)
 """
-function bestapprox_expm_data(deg::Integer)::RationalApproximation
+function bestapprox_expm_data(deg::Integer)
     bestapproximations = Dict(
         2 => (
             z = [

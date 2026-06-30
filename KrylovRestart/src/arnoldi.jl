@@ -1,6 +1,13 @@
 """
 `arnoldi(A,q₁,m)`
 Perform an Anoldi run for a Krylov Subspace ``\\cal{K}_m(A,q_1)`` of dimension `m`
+
+
+Returns: \n
+`Q`, `m` x `size(A,1)` orthonormal \n
+`H`, `m` x `m` unreduced upper Hessenberg matrix \n
+`η`, the final off diagonal term \n
+`q_next`, the next basis vector that would be added to `Q`
 """
 function arnoldi(A, b, m)
 
