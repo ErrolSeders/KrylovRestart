@@ -21,7 +21,7 @@ include("./krylov_approximation.jl")
 
 export RationalApproximation, bestapprox_expm_data
 export arnoldi, lanczos
-export StopCode, KrylovTrace, krylov_approx
+export StopCode, Trace, krylov_approx
 export krylov_approx_quad, krylov_approx_quad2, message
 export krylov_approx_chen_implicit, krylov_approx_chen_explicit
 

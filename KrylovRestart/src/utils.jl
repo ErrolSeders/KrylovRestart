@@ -1,3 +1,9 @@
+function unit_vector(T::Type, size::Int, pos::Int)
+    unit = zeros(T, size)
+    unit[pos] = one(T)
+    return unit
+end
+
 @enum StopCode begin
     MaxRestarts #0
     AbsErrAcc #1
@@ -5,6 +11,7 @@
     AbsErrLinConv #3
     UpBndLinConv #4
     UpdateAcc #5
+    IndicatorAcc #6
 end
 
 message(::Val{MaxRestarts}) = "Maximum number of restarts reached."
@@ -13,8 +20,62 @@ message(::Val{UpBndAcc}) = "Upper bound below stopping accuracy."
 message(::Val{AbsErrLinConv}) = "Linear convergence rate of absolute error greater than minimum decay."
 message(::Val{UpBndLinConv}) = "Linear convergence rate upper bound greater than minimum decay."
 message(::Val{UpdateAcc}) = "Norm of updates below stopping accuracy."
+message(::Val{IndicatorAcc}) = "Error Indicator below stopping accuracy"
 message(::Val{M}) where {M} = "Invalid stop code encountered! This should never happen!"
 message(c::StopCode) = message(Val(c))
+
+"""Optional collector for convergence statistics (one entry per restart)."""
+mutable struct Trace
+    num_restarts::Int
+    stop::Union{Nothing, StopCode}
+    data::Dict{String, AbstractVector}
+end
+
+function Base.show(io::IO, tr::Trace)
+    print(io, "Trace(restarts=$(tr.num_restarts), stop=$(isnothing(tr.stop) ? "nothing" : tr.stop), metrics=$(length(tr.data)))")
+end
+
+function Base.show(io::IO, ::MIME"text/plain", tr::Trace)
+    println(io, "Trace")
+    println(io, "  restarts: ", tr.num_restarts)
+    if isnothing(tr.stop)
+        println(io, "  stop: not set")
+    else
+        println(io, "  stop: ", tr.stop, " — ", message(tr.stop))
+    end
+
+    if isempty(tr.data)
+        print(io, "  metrics: (none)")
+        return
+    end
+
+    println(io, "  metrics:")
+    for key in sort!(collect(keys(tr.data)))
+        values = tr.data[key]
+        n = length(values)
+        print(io, "    - ", key, ": ", n, " entr", n == 1 ? "y" : "ies")
+        if n > 0
+            print(io, " (last=", values[end], ")")
+        end
+        println(io)
+    end
+end
+
+function reset!(tr::Trace)
+    tr.num_restarts = 0
+    tr.stop = nothing
+    empty!(tr.data)
+    return tr
+end
+
+set_restart!(::Nothing, _k) = nothing
+set_restart!(tr::Trace, k) = (tr.num_restarts = k)
+
+set_stop!(::Nothing, _stop::StopCode) = nothing
+set_stop!(tr::Trace, stop::StopCode) = (tr.stop = stop)
+
+log_item!(::Nothing, item_name, _x) = nothing
+log_item!(tr::Trace, item_name, value) = push!(get!(tr.data, item_name, typeof(value)[]), value)
 
 """
 Checks whether the entries of v are of the form 1,...,1,0,...0,1,1 (i.e., last two entries are true/1, but not all entries are true/1)
@@ -32,18 +93,17 @@ function check_stop_condition(v)
 end
 
 """Tracks the 'last-two-true but not all true' decay pattern without storing full history."""
-mutable struct DecayTracker{T <: AbstractFloat}
-    prev_metric::T
+mutable struct DecayTracker
+    prev_metric
     have_prev::Bool
     last_ratio_gt::Bool
     prev_ratio_gt::Bool
     seen_ratio_false::Bool
 end
 
-DecayTracker{T}() where {T <: AbstractFloat} = DecayTracker(T(NaN), false, false, false, false)
-DecayTracker(::Type{T} = Float64) where {T <: AbstractFloat} = DecayTracker{T}()
+DecayTracker() = DecayTracker(NaN, false, false, false, false)
 
-@inline function update_decay!(dt::DecayTracker{T}, metric::T, min_decay::T) where {T <: AbstractFloat}
+@inline function update_decay!(dt::DecayTracker, metric, min_decay)
     if !dt.have_prev
         dt.prev_metric = metric
         dt.have_prev = true
@@ -74,24 +134,23 @@ function stop_conditions!(
         m::Int,
         bound::Bool,
         exact,
-        tol::T,
-        min_decay::T,
-        trace,
-        callback,
+        tol,
+        min_decay,
+        trace::Union{Trace, Nothing},
         k::Int,
-        up_decay::DecayTracker{T},
-        err_decay::DecayTracker{T}
-    )::Union{StopCode, Nothing} where {T <: AbstractFloat}
+        up_decay::DecayTracker,
+        err_decay::DecayTracker
+    )::Union{StopCode, Nothing}
 
     not_using_exact = exact === nothing || isempty(exact)
 
     if bound
-        low = T(β * abs(h[end - 1]))
+        low = β * abs(h[end - 1])
         w = A * qm
-        up = T(β * norm((h[end - 1] - α1 * h[end]) * qm + h[end] * w))
+        up = β * norm((h[end - 1] - α1 * h[end]) * qm + h[end] * w)
 
-        log_lowbnd!(trace, low)
-        log_upbnd!(trace, up)
+        log_item!(trace, "low_bnd", low)
+        log_item!(trace, "up_bnd", up)
 
         stop = nothing
         if update_decay!(up_decay, up, min_decay)
@@ -100,12 +159,11 @@ function stop_conditions!(
             stop = UpBndAcc
         end
 
-        maybe_callback(callback, (; k, lowbnd = low, upbnd = up, stop))
         return stop
 
     elseif !not_using_exact
-        err = T(norm(fk - exact))
-        log_err!(trace, err)
+        err = norm(fk - exact)
+        log_item!(trace, "abs_err", err)
 
         stop = nothing
         if update_decay!(err_decay, err, min_decay)
@@ -114,59 +172,14 @@ function stop_conditions!(
             stop = AbsErrAcc
         end
 
-        maybe_callback(callback, (; k, err, stop))
         return stop
 
     else
-        update_norm = T(β * norm(@view h[1:m]))
-        log_update_norm!(trace, update_norm)
+        update_norm = β * norm(h[1:m])
+        log_update_norm!(trace, "update_norm", update_norm)
 
         stop = update_norm < tol ? UpdateAcc : nothing
-        maybe_callback(callback, (; k, update_norm, stop))
+
         return stop
     end
 end
-
-"""Optional collector for convergence statistics (one entry per restart)."""
-mutable struct KrylovTrace{T <: AbstractFloat}
-    num_restarts::Int
-    stop::Union{Nothing, StopCode}
-    lowbnd::Vector{T}
-    upbnd::Vector{T}
-    errs::Vector{T}
-    update_norms::Vector{T}
-end
-
-KrylovTrace{T}() where {T <: AbstractFloat} = KrylovTrace(0, nothing, T[], T[], T[], T[])
-KrylovTrace(::Type{T} = Float64) where {T <: AbstractFloat} = KrylovTrace{T}()
-
-function reset!(tr::KrylovTrace)
-    tr.num_restarts = 0
-    tr.stop = nothing
-    empty!(tr.lowbnd)
-    empty!(tr.upbnd)
-    empty!(tr.errs)
-    empty!(tr.update_norms)
-    return tr
-end
-
-set_restart!(::Nothing, _k) = nothing
-set_restart!(tr::KrylovTrace, k) = (tr.num_restarts = k)
-
-set_stop!(::Nothing, _stop::StopCode) = nothing
-set_stop!(tr::KrylovTrace, stop::StopCode) = (tr.stop = stop)
-
-log_lowbnd!(::Nothing, _x) = nothing
-log_lowbnd!(tr::KrylovTrace, x) = push!(tr.lowbnd, x)
-
-log_upbnd!(::Nothing, _x) = nothing
-log_upbnd!(tr::KrylovTrace, x) = push!(tr.upbnd, x)
-
-log_err!(::Nothing, _x) = nothing
-log_err!(tr::KrylovTrace, x) = push!(tr.errs, x)
-
-log_update_norm!(::Nothing, _x) = nothing
-log_update_norm!(tr::KrylovTrace, x) = push!(tr.update_norms, x)
-
-maybe_callback(::Nothing, _info) = nothing
-maybe_callback(cb, info) = cb(info)

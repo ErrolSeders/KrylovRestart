@@ -1,15 +1,4 @@
-"""
-    krylov_approx(f, A, b; m=30, max_restarts=200, tol=nothing, bound=true, exact=nothing,
-                 min_decay=0.95, trace=nothing, callback=nothing)
-
-Restarted Krylov approximation of `f(A)b` (Alg. 1) or `r(A)b` for a `RationalApproximation` (Alg. 2).
-
-The default API returns only the approximation vector and does not store per-restart history.
-To collect convergence information for experiments, pass `trace=KrylovTrace()` and/or a
-`callback(info)` function (e.g. to save iterates, plot errors, etc.).
-"""
-
-function update_alphas(α1, α2, H)
+function _update_alphas(α1, α2, H)
 
     if size(H) == (1, 1)
         μ = λ = H[1]
@@ -50,34 +39,43 @@ The resulting matrix is `Tridiagonal` and of size `km + m + l` x `km + m + l` wh
 is the size of `concat_block`.
 Note: `concat_block` is expected to be square and preserve the Tridiagonal structure!
 """
-function _build_Hhat(That, T::SymTridiagonal, η_prev, k = nothing, m = nothing; η = 0.0, concat_block = [])
+function _build_Hhat(That, T::SymTridiagonal, η_prev, k, m; η = 0.0, concat_block = [])
 
-    That_sup_diag, That_diag, That_sub_diag = isempty(concat_block) ? (
-            [diag(That, 1); [0]; T.ev],
-            [diag(That); T.dv],
-            [diag(That, -1); [η_prev]; T.ev],
+    km = (k - 1) * m
+
+    That_sub_diag, That_diag, That_sup_diag = isempty(concat_block) ? (
+            [diag(That, -1)[1:(km - 1)]; [η_prev]; T.ev],
+            [diag(That)[1:km]; T.dv],
+            [diag(That, 1)[1:(km - 1)]; [0.0]; T.ev],
         ) : (
-            [diag(That, 1); [0]; T.ev; [0]; diag(concat_block, 1)],
-            [diag(That); T.dv ; diag(concat_block)],
-            [diag(That, -1); [η_prev]; T.ev; [η]; diag(concat_block, -1)],
+            [diag(That, -1)[1:(km - 1)]; [η_prev]; T.ev; [η]; diag(concat_block, -1)],
+            [diag(That)[1:km]; T.dv ; diag(concat_block)],
+            [diag(That, 1)[1:(km - 1)]; [0.0]; T.ev; [0.0]; diag(concat_block, 1)],
         )
 
     return Tridiagonal(That_sub_diag, That_diag, That_sup_diag)
 end
 
+_build_extended_H_herm(H::SymTridiagonal, η, α1, α2) = Tridiagonal(
+    [H.ev;[η, 1.0]],
+    [H.dv;[α1, α2]],
+    [H.ev;[0.0, 0.0]]
+)
+
+function _build_extended_H!(Hbar, H, η, α1, α2)
+    Hbar[1:m, 1:m] .= H
+    Hbar[(m + 1):(m + 2), (m + 1):(m + 2)] = [α1 0.0; 1.0 α2]
+    Hbar[m + 1, m] = η
+    return nothing
+end
 
 krylov_approx(f, A::AbstractArray, b::AbstractVector, m::Integer; kwargs...) =
     krylov_approx(f, A, b; m = Int(m), kwargs...)
 
 """
-    krylov_approx(f, A, b; m=30, max_restarts=200, tol=nothing, bound=true, exact=nothing,
-                 min_decay=0.95, trace=nothing, callback=nothing)
-
 Compute `f(A)b` in the manner corresponding to Alg. 1 in the paper.
 
-If `trace::KrylovTrace` is provided, it is filled with per-restart statistics.
-If `callback` is provided, it is called once per restart as `callback(info)` where
-`info` is a named tuple containing the measured stopping quantity (and `stop` if triggered).
+If `trace::Trace` is provided, it is filled with per-restart statistics.
 """
 function krylov_approx(
         f::Function,
@@ -89,8 +87,7 @@ function krylov_approx(
         bound::Bool = true,
         exact::Union{Nothing, AbstractVector} = nothing,
         min_decay = 0.95,
-        trace::Union{Nothing, KrylovTrace} = nothing,
-        callback = nothing
+        trace::Union{Nothing, Trace} = nothing
     )
 
     if !isnothing(exact) && bound
@@ -99,14 +96,11 @@ function krylov_approx(
     m < 1 && throw(ArgumentError("m must be ≥ 1"))
 
     Tdefault = float(real(eltype(A)))
-    tolT = tol === nothing ? eps(Tdefault) : float(tol)
-    TT = typeof(tolT)
-    tolT = TT(tolT)
-    min_decayT = TT(min_decay)
+    tol = isnothing(tol) ? eps(Tdefault) : tol
 
     # state for the linear-convergence-based stopping rules
-    up_decay = DecayTracker(TT)
-    err_decay = DecayTracker(TT)
+    up_decay = DecayTracker()
+    err_decay = DecayTracker()
 
     α1, α2 = if bound
         prevfloat(Tdefault(Inf)), nextfloat(Tdefault(-Inf))
@@ -124,7 +118,7 @@ function krylov_approx(
     is_A_hermitian = ishermitian(A)
 
     if !is_A_hermitian
-        Hhat = Array{eltype(H)}(undef, 0, 0)
+        Hhat = Array{eltype(A)}(undef, 0, 0)
     end
 
     for k in 1:max_restarts
@@ -134,27 +128,12 @@ function krylov_approx(
         (Q, H, η, qm) = is_A_hermitian ? lanczos(A, qm, m) : arnoldi(A, qm, m)
 
         if bound
-            α1, α2 = update_alphas(α1, α2, H)
+            α1, α2 = _update_alphas(α1, α2, H)
         end
 
         if k == 1
             # If I constantly have to do different things for Hermitian vs. Non-Hermitian then maybe I should dispatch a different algorithm for Hermitian.
-            is_A_hermitian ? (
-                    begin
-                        Hhat = Tridiagonal(
-                            [H.ev;[0.0, 0.0]],
-                            [H.dv;[α1, α2]],
-                            [H.ev;[η, 1.0]]
-                        )
-                    end
-                ) : (
-                    begin
-                        Hhat = zeros(eltype(H), m + 2, m + 2)
-                        Hhat[1:m, 1:m] = H
-                        Hbar[m + 1, m] = η
-                        Hhat[(m + 1):(m + 2), (m + 1):(m + 2)] = [α1 0.0; 1.0 α2]
-                    end
-                )
+            is_A_hermitian ? Hhat = _build_extended_H_herm(H, η, α1, α2) : (Hhat = zeros(eltype(H), m + 2, m + 2); _build_extended_H!(Hhat, η, α1, α2))
         else
             Hhat_expand = _build_Hhat(Hhat, H, η_prev, k, m, η = η, concat_block = [α1 0.0; 1.0 α2])
             Hhat = Hhat_expand
@@ -166,8 +145,8 @@ function krylov_approx(
 
         stop = stop_conditions!(
             A, α1, β, h, qm, fk, m,
-            bound, exact, tolT, min_decayT,
-            trace, callback, k,
+            bound, exact, tol, min_decay,
+            trace, k,
             up_decay, err_decay
         )
 
@@ -179,6 +158,36 @@ function krylov_approx(
 
     set_stop!(trace, MaxRestarts)
     return fk
+end
+
+function _retrieve_poles_coeff(r::RationalApproximation)
+    return (length(r.single_poles), [r.single_poles; r.conj_poles], [r.single_coeff; r.conj_coeff])
+end
+
+function _init_Bbar(poles, m)
+    Bbar = zeros(ComplexF64, m + 2, length(poles))
+    Bbar[end - 2, :] .= 1.0 + 0.0im
+    return Bbar
+end
+
+function _update_Bbar!(Bbar, Hbar, poles, s, m)
+    qbar = zeros(ComplexF64, m + 2)
+    for p in eachindex(poles)
+        qbar[1] = s * Bbar[m, p]
+        Bbar[1:(m + 2), p] = (poles[p] * I - Hbar) \ qbar
+    end
+    return nothing
+end
+
+function _update_vector(Bbar, n_single, poles, coeff, m)
+    # contribution from single poles
+    @views h = n_single > 0 ? Bbar[1:(m + 2), 1:n_single] * coeff[1:n_single] : zeros(ComplexF64, m + 2)
+
+    if n_single < length(poles) # add in the contrabution from the conjugate poles
+        @views h .+= 2 * real(Bbar[1:(m + 2), (n_single + 1):end] * coeff[(n_single + 1):end])
+    end
+
+    return h
 end
 
 krylov_approx(r::RationalApproximation, A::AbstractArray, b::AbstractVector, m::Integer; kwargs...) =
@@ -200,8 +209,7 @@ function krylov_approx(
         bound::Bool = true,
         exact::Union{Nothing, AbstractVector} = nothing,
         min_decay = 0.95,
-        trace::Union{Nothing, KrylovTrace} = nothing,
-        callback = nothing
+        trace::Union{Nothing, Trace} = nothing
     )
 
     if !isnothing(exact) && bound
@@ -210,16 +218,13 @@ function krylov_approx(
     m < 1 && throw(ArgumentError("m must be ≥ 1"))
 
     Tdefault = float(real(eltype(A)))
-    tolT = tol === nothing ? eps(Tdefault) : float(tol)
-    TT = typeof(tolT)
-    tolT = TT(tolT)
-    min_decayT = TT(min_decay)
+    tol = isnothing(tol) ? eps(Tdefault) : tol
 
-    up_decay = DecayTracker(TT)
-    err_decay = DecayTracker(TT)
+    # state for the linear-convergence-based stopping rules
+    up_decay = DecayTracker()
+    err_decay = DecayTracker()
 
     α1, α2 = if bound
-        # Set to 'virtually' Inf so that LU does not fail for solves with '\'
         prevfloat(Tdefault(Inf)), nextfloat(Tdefault(-Inf))
     else
         zero(Tdefault), zero(Tdefault)
@@ -232,16 +237,11 @@ function krylov_approx(
     β = norm(b)
     qm = (1 / β) * b
 
-    nr_single = length(r.single_poles)
-    poles = [r.single_poles; r.conj_poles]
-    coeff = [r.single_coeff; r.conj_coeff]
+    n_single, poles, coeff = _retrieve_poles_coeff(r)
 
-    Bbar = zeros(ComplexF64, m + 2, length(poles))
-    Bbar[end - 2, :] .= 1.0 + 0.0im
+    Bbar = _init_Bbar(poles, m)
     s = one(eltype(Bbar))
-
-    e1 = zeros(eltype(A), m + 2)
-    e1[1] = one(eltype(A))
+    e1 = unit_vector(eltype(A), m + 2, 1)
 
     is_A_hermitian = ishermitian(A)
 
@@ -254,39 +254,14 @@ function krylov_approx(
         (Q, H, η, qm) = is_A_hermitian ? lanczos(A, qm, m) : arnoldi(A, qm, m)
 
         if bound
-            α1, α2 = update_alphas(α1, α2, H)
+            α1, α2 = _update_alphas(α1, α2, H)
         end
 
-        # Hbar is overwritten in this block
-        is_A_hermitian ? (
-                begin
-                    Hbar = Tridiagonal(
-                        [H.ev;[0.0, 0.0]],
-                        [H.dv;[α1, α2]],
-                        [H.ev;[η, 1.0]]
-                    )
-                end
-            ) : (
-                begin
+        is_A_hermitian ? Hbar = _build_extended_H_herm(H, η, α1, α2) : _build_extended_H!(Hbar, H, η, α1, α2)
 
-                    Hbar[1:m, 1:m] .= H
-                    Hbar[(m + 1):(m + 2), (m + 1):(m + 2)] = [α1 0.0; 1.0 α2]
-                    Hbar[m + 1, m] = η
-                end
-            )
+        _update_Bbar!(Bbar, Hbar, poles, s, m)
 
-        qbar = zeros(ComplexF64, m + 2)
-        for p in eachindex(poles)
-            qbar[1] = s * Bbar[m, p]
-            Bbar[1:(m + 2), p] = (poles[p] * I - Hbar) \ qbar
-        end
-
-        # contribution from single poles
-        @views h = nr_single > 0 ? Bbar[1:(m + 2), 1:nr_single] * coeff[1:nr_single] : zeros(ComplexF64, m + 2)
-
-        if nr_single < length(poles) # add in the contrabution from the conjugate poles
-            @views h .+= 2 * real(Bbar[1:(m + 2), (nr_single + 1):end] * coeff[(nr_single + 1):end])
-        end
+        h = _update_vector(Bbar, n_single, poles, coeff, m)
 
         s = η
 
@@ -298,8 +273,8 @@ function krylov_approx(
 
         stop = stop_conditions!(
             A, α1, β, h, qm, fk, m,
-            bound, exact, tolT, min_decayT,
-            trace, callback, k,
+            bound, exact, tol, min_decay,
+            trace, k,
             up_decay, err_decay
         )
 
@@ -314,122 +289,12 @@ function krylov_approx(
 end
 
 """
-    Compute `f(A)b` by continually approximating `f` using the AAA algorithm.
-"""
-# function krylov_approx_barycentric(
-#         f::Function,
-#         A::AbstractArray,
-#         b::AbstractVector;
-#         m::Int = 30,
-#         max_restarts::Int = 200,
-#         tol = nothing,
-#         exact::Union{Nothing, AbstractVector} = nothing,
-#         min_decay = 0.95,
-#         trace::Union{Nothing, KrylovTrace} = nothing,
-#         callback = nothing
-#     )
-
-#     m < 1 && throw(ArgumentError("m must be ≥ 1"))
-
-#     Tdefault = float(real(eltype(A)))
-#     tolT = tol === nothing ? eps(Tdefault) : float(tol)
-#     TT = typeof(tolT)
-#     tolT = TT(tolT)
-#     min_decayT = TT(min_decay)
-
-#     up_decay = DecayTracker(TT)
-#     err_decay = DecayTracker(TT)
-
-#     real_res = (eltype(A) <: AbstractFloat) && (eltype(b) <: AbstractFloat)
-
-#     β = norm(b)
-#     qm = (1 / β) * b
-
-#     e1 = zeros(ComplexF64, m + 2)
-#     e1[1] = 1.0 + 0.0im
-
-#     # H is allocated once
-#     Hbar = zeros(eltype(A), m + 2, m + 2)
-
-#     is_A_hermitian = ishermitian(A)
-
-#     α1, α2 = Inf, -Inf
-
-#     Tvec = promote_type(eltype(A), eltype(b))
-#     fk = zeros(real_res ? Tvec : ComplexF64, size(A, 1))
-
-#     for k in 1:max_restarts
-
-#         set_restart!(trace, k)
-
-#         (Q, H, η, qm) = is_A_hermitian ? lanczos(A, qm, m) : arnoldi(A, qm, m)
-
-#         vals = eigvals(H)
-
-#         α1 = min(α1, vals .|> real |> minimum)
-#         α2 = max(α2, vals .|> real |> maximum)
-
-#         # Include the two extra spectral points that appear in Hbar.
-#         vals_aug = vcat(vals, α1, α2)
-#         R, c = fetch_contour_shape(vals_aug, 1.1)
-
-#         contour = Circle(c, R)
-
-#         r = approximate(f, contour)
-
-#         Z = r.fun.nodes
-#         W = r.fun.weights
-#         WF = r.fun.w_times_f
-
-#         # H is overwritten in this block
-#         Hbar[1:m, 1:m] .= H
-#         Hbar[(m + 1):(m + 2), (m + 1):(m + 2)] = [α1 0.0; 1.0 α2]
-#         Hbar[m + 1, m] = η
-
-#         # Evaluate the AAA barycentric rational on the projected matrix:
-#         #   r(M) = (∑_j w_j f_j (z_j I - M)^{-1}) (∑_j w_j (z_j I - M)^{-1})^{-1}
-#         # applied to the restart RHS q = e1.
-#         q = e1
-#         numer = zeros(ComplexF64, m + 2)
-#         denom = zeros(ComplexF64, m + 2, m + 2)
-#         for j in eachindex(Z)
-#             M = Z[j] * I - Hbar
-#             Fm = lu(M)
-#             numer .+= WF[j] .* (Fm \ q)
-#             denom .+= W[j] .* (Fm \ I)
-#         end
-#         h = denom \ numer
-
-#         if real_res
-#             h = real.(h)
-#         end
-
-#         @views fk .+= β * (Q * h[1:m])
-
-#         stop = stop_conditions!(
-#             A, α1, β, h, qm, fk, m,
-#             true, exact, tolT, min_decayT,
-#             trace, callback, k,
-#             up_decay, err_decay
-#         )
-
-#         if stop !== nothing
-#             set_stop!(trace, stop)
-#             return fk
-#         end
-#     end
-
-#     set_stop!(trace, MaxRestarts)
-#     return fk
-# end
-
-"""
     integral_error_correction(f,H,Hs,ηs,order,contour_safety)
 
     evaluate the integral formulation for the error term at the transformed quadrature points
 
 """
-function integral_error_correction(
+function _integral_error_correction(
         f::Function,
         H::AbstractArray,
         Hs,
@@ -441,7 +306,6 @@ function integral_error_correction(
     )
 
     m = size(H, 1)
-    #@info "solving quad of order $order"
 
     x, w = contour_quad_nodes(order, R, c)
 
@@ -476,7 +340,8 @@ function krylov_approx_quad(
         ;
         tol = 1.0e-16,
         max_restarts = 200,
-        contour_safety = 1.1
+        contour_safety = 2.0,
+        trace::Union{Nothing, Trace} = nothing
     )
 
     β = norm(b)
@@ -492,33 +357,36 @@ function krylov_approx_quad(
     h = f(H)[1, :]
     fk = β * Q * h
 
-    e1 = zeros(eltype(H), m)
-    e1[1] = one(eltype(H))
+    e1 = unit_vector(eltype(H), m, 1)
 
-    ```
-       For the integral we throw a circular contour around the ritz values
-    ```
+    # For the integral we throw a circular contour around the ritz values
     R, c = fetch_contour_shape(H, contour_safety)
 
     quad1::Int64 = 8
     quad2::Int64 = round(sqrt(2) * quad1)
 
-    for _k in 2:max_restarts
+    h2 = h
+    for k in 2:max_restarts
+
+        set_restart!(trace, k)
+
         #@info "Iteration $_k"
         (Q, H, η, qm) = is_A_hermitian ? lanczos(A, qm, m) : arnoldi(A, qm, m)
 
         accurate = false
         refined = false
 
-        h2 = zeros(m)
         err_prev = 1.0e16
         while !accurate
 
-            R, c = fetch_contour_shape(H, contour_safety)
+            log_item!(trace, "quad1_val", quad1)
+            log_item!(trace, "quad2_val", quad2)
+
             h1 = integral_error_correction(f, H, Hs, ηs, quad1, R, c, e1)
             h2 = integral_error_correction(f, H, Hs, ηs, quad2, R, c, e1)
 
             err = norm(h2 - h1)
+            log_item!(trace, "quad_err", err)
 
             #@info "Quadrature error $(err)"
             if err < tol
@@ -537,7 +405,10 @@ function krylov_approx_quad(
         #@info "norm of update $(norm(update))"
 
         fk += update
-        if norm(update) < tol
+
+        update_norm = norm(update)
+        log_item!(trace, "update_norm", update_norm)
+        if update_norm < tol
             return fk
         end
 
@@ -549,10 +420,10 @@ function krylov_approx_quad(
             quad1 = round(quad2 / sqrt(2))
         end
     end
-    return
+    return fk
 end
 
-function make_integral_function(f, H, Hs, ηs, R, c, e1)
+function _make_integral_function(f, H, Hs, ηs, R, c, e1)
 
     m = size(H, 1)
 
@@ -598,7 +469,8 @@ function krylov_approx_quad2(
         tol = 1.0e-16,
         max_restarts = 200,
         contour_safety = 1.1,
-        alg = QuadGKJL()
+        alg = QuadGKJL(),
+        trace::Union{Nothing, Trace}
     )
 
     real_res = false
@@ -610,18 +482,18 @@ function krylov_approx_quad2(
     β = norm(b)
 
     qm = (1 / β) * b
+
     is_A_hermitian = ishermitian(A)
 
     (Q, H, η, qm) = is_A_hermitian ? lanczos(A, qm, m) : arnoldi(A, qm, m)
 
-    Hs = [UpperHessenberg(H)]
+    Hs = [H]
     ηs::Vector{eltype(H)} = [η]
 
     h = f(H)[1, :]
     fk = β * Q * h
 
-    e1::Vector{eltype(H)} = zeros(eltype(H), m)
-    e1[1] = one(eltype(H))
+    e1 = unit_vector(eltype(H), m, 1)
 
     for _k in 2:max_restarts
         @info "Iteration $_k"
@@ -666,7 +538,7 @@ For this algorithm we need `f` to be a rational function
 and furthermore `A` to be HPD.
 
 """
-function krylov_approx_2norm(f, A, b, m)
+function krylov_approx_2norm(r::RationalApproximation, A, b, m)
 
 end
 
@@ -711,14 +583,21 @@ function build_contour_chen(f, T, contour_safety, order, w)
 end
 
 """
-Implementation of an implicit restarted KSM using an error indicator adapted from Chen et al. and an implicit restarting scheme derived from the cauchy integral form of the KSM approximation
+Implementation of an implicit restarted KSM using an error indicator adapted from Chen et al. and an implicit
+restarting scheme derived from the cauchy integral form of the KSM approximation
 
 For this algorithm we require that `A` be Hermitian as the error bound is only valid for the Lanczos decomposition.
 The adaptation for the restarted scheme was derived assuming that we have a decomposition as given by Eiermann and Ernst (2006).
 
-This algorithm is rather sensitive to its hyperparameters, we ideally want to choose `w` less than the minimum eigenvalue of `A`. Furthermore, in this algorithm we try determine a countour the fully encloses the eigenvalues of `A` and all subsequent `Tk` in one fell swoop based upon the initial ritz values extracted from `T1`. The ritz values of `T1` should be an okay approximation to the extreme values of `A`. Therefore, we have the variable `contour_safety` which will scale the radius of the circular contour beyond the initial maximum ritz value. A sufficiently large number of quadrature nodes must be choosen as well with `order`.
+This algorithm is rather sensitive to its hyperparameters, we ideally want to choose `w` less than the minimum
+eigenvalue of `A`. Furthermore, in this algorithm we try determine a countour the fully encloses the eigenvalues
+of `A` and all subsequent `Tk` in one fell swoop based upon the initial ritz values extracted from `T1`. The ritz
+values of `T1` should be an okay approximation to the extreme values of `A`. Therefore, we have the variable
+`contour_safety` which will scale the radius of the circular contour beyond the initial maximum ritz value.
+A sufficiently large number of quadrature nodes must be choosen as well with `order`.
 
-Two key variables that need to be controlled for this algorithm to work are the value `w` which is a single complex point that we need to choose
+Two key variables that need to be controlled for this algorithm to work are the value `w` which is a single
+complex point that we need to choose
 to be disjoint from both the spectrum of `A` and the ritz-values of each `T`.
 We also will need to choose a contour for evaluating an integral such that every value of
 the contour is far away from the spectrum of `A` and ritz-values of each `T`.
@@ -728,7 +607,8 @@ function krylov_approx_chen_implicit(
         tol = 1.0e-16,
         max_restarts = 200,
         contour_safety = 2.0,
-        order = 80
+        order = 80,
+        trace::Union{Nothing, Trace}
     )
 
     @assert ishermitian(A)
@@ -762,8 +642,8 @@ function krylov_approx_chen_implicit(
 
     ηs = [η]
 
-    e1 = zeros(m); e1[1] = 1.0
-    em = zeros(m); em[end] = 1.0
+    e1 = unit_vector(eltype(A), m, 1)
+    em = unit_vector(eltype(A), m, m)
 
     # eₘᵀ(T - zI)⁻¹ at each quad node
     right_vecs = [mapreduce(node -> (T - node * I)' \ em, hcat, nodes)]
@@ -781,8 +661,6 @@ function krylov_approx_chen_implicit(
 
         Q_herm_b = Q' * b
         push!(Q_herm_bs, Q_herm_b)
-
-        T::SymTridiagonal = SymTridiagonal(T)
 
         sub_diag = diag(T, -1)
         sub_diag_prod = prod(sub_diag)
@@ -837,8 +715,9 @@ function krylov_approx_chen_implicit(
         push!(ηs, η)
 
         det_prod = exp.(-dets_accum .+ w_det_accum)
-        # print("det_prod: "); display(det_prod)
         error_indicator = error_integral_constant * dot(weights, absfval .* det_prod .* norm_val)
+
+        log_item!(trace, "error_indicator", error_indicator)
 
         if isnan(error_indicator)
             throw(OverflowError("Error bound is NaN, choose a different value for `w`"))
@@ -867,7 +746,8 @@ function krylov_approx_chen_explicit(
         max_restarts = 200,
         contour_safety = 2.0,
         order = 20,
-        rebuild_contour = true
+        rebuild_contour = true,
+        trace::Union{Trace, Nothing} = nothing
     )
 
     @assert ishermitian(A)
@@ -881,13 +761,17 @@ function krylov_approx_chen_explicit(
 
     R, c, nodes, weights, fval, absfval, norm_val, error_integral_constant = build_contour_chen(f, T, contour_safety, order, w)
 
+    log_item!(trace, "radius_center", (R, c))
+    log_item!(trace, "norm_val", norm_val)
+    log_item!(trace, "absfval", absfval)
+
     fk = β * Q * f(That)[:, 1]
 
     for k in 2:max_restarts
 
         (Q, T, η, qm) = lanczos(A, qm, m)
 
-        That = _build_Hhat(That, T, η_prev)
+        That = _build_Hhat(That, T, η_prev, k, m)
 
         η_prev = η
 
@@ -897,6 +781,9 @@ function krylov_approx_chen_explicit(
 
         if rebuild_contour
             R, c, nodes, weights, fval, absfval, norm_val, error_integral_constant = build_contour_chen(f, That, contour_safety, order, w)
+            log_item!(trace, "nodes", nodes)
+            log_item!(trace, "radius_center", (R, c))
+            log_item!(trace, "norm_val", norm_val)
         end
 
         norm_hwz_T = Array{Float64}(undef, order)
@@ -904,8 +791,11 @@ function krylov_approx_chen_explicit(
         for (i, node) in enumerate(nodes)
             norm_hwz_T[i] = det_w - first(logabsdet(That - node * I))
         end
+        log_item!(trace, "norm_hwz_T", norm_hwz_T)
 
         error_indicator = (error_integral_constant * dot(weights, absfval .* exp.(norm_hwz_T) .* norm_val))
+
+        log_item!(trace, "error_indicator", error_indicator)
 
         if isnan(error_indicator)
             throw(OverflowError("Error bound is NaN, choose a different value for `w`"))
@@ -914,10 +804,10 @@ function krylov_approx_chen_explicit(
         error_indicator = error_indicator |> real |> abs
 
         if error_indicator < tol
-            @info k, error_indicator
+            set_stop!(trace, IndicatorAcc)
             return fk
         end
     end
-    @info "Max Restarts"
+    set_stop!(trace, MaxRestarts)
     return fk
 end
