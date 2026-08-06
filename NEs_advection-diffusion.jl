@@ -12,8 +12,10 @@ begin
 	using CairoMakie
 	using DataFrames
 
+	using JLD2
+	
 	# Enable if using a Mac
-	#using AppleAccelerate # Use Apple accelerate BLAS & LAPACK
+	using AppleAccelerate # Use Apple accelerate BLAS & LAPACK
 	
 	using Ferrite
 	using FerriteGmsh
@@ -185,44 +187,63 @@ begin
 	
 end
 
+# ╔═╡ 9848b2a3-98dc-43ae-a296-13e94ffc4619
+# ╠═╡ disabled = true
+#=╠═╡
+@save "Advection_Diffusion_discrete_op_fem.jld2" Lh
+  ╠═╡ =#
+
 # ╔═╡ a347acef-234c-4f3e-aeee-c1491cf543d0
-r = bestapprox_expm_data(16)
-
-funm_krylov_restart_ra(r, A, b, p) = begin
-	tr = KrylovTrace()
-	fk = krylov_approx(
-		r, A, b, p.restart_length;
-		max_restarts = p.max_restarts,
-		tol = p.stop_accuracy,
-		bound = p.bound,
-		exact = p.exact,
-		min_decay = p.min_decay,
-		trace = tr,
-	)
-	return fk, tr.stop, tr
+# ╠═╡ disabled = true
+#=╠═╡
+begin
+	r = bestapprox_expm_data(16)
+	
+	funm_krylov_restart_ra(r, A, b, p) = begin
+		tr = KrylovTrace()
+		fk = krylov_approx(
+			r, A, b, p.restart_length;
+			max_restarts = p.max_restarts,
+			tol = p.stop_accuracy,
+			bound = p.bound,
+			exact = p.exact,
+			min_decay = p.min_decay,
+			trace = tr,
+		)
+		return fk, tr.stop, tr
+	end
+	
+	funm_krylov_restart_full(f, A, b, p) = begin
+		tr = KrylovTrace()
+		fk = krylov_approx(
+			f, A, b, p.restart_length;
+			max_restarts = p.max_restarts,
+			tol = p.stop_accuracy,
+			bound = p.bound,
+			exact = p.exact,
+			min_decay = p.min_decay,
+			trace = tr,
+		)
+		return fk, tr.stop, tr
+	end
 end
-
-funm_krylov_restart_full(f, A, b, p) = begin
-	tr = KrylovTrace()
-	fk = krylov_approx(
-		f, A, b, p.restart_length;
-		max_restarts = p.max_restarts,
-		tol = p.stop_accuracy,
-		bound = p.bound,
-		exact = p.exact,
-		min_decay = p.min_decay,
-		trace = tr,
-	)
-	return fk, tr.stop, tr
-end
+  ╠═╡ =#
 
 # ╔═╡ 10499a9c-56db-4bf0-b665-a23e5a4af941
+# ╠═╡ disabled = true
+#=╠═╡
 Lhinv = inv(Lh |> Matrix) # This is bad!
+  ╠═╡ =#
 
 # ╔═╡ c5d411a5-0797-44bf-a075-14da6bdff7cd
+# ╠═╡ disabled = true
+#=╠═╡
 exact_input = exp(tLh |> Matrix) * (Lhinv * g)
+  ╠═╡ =#
 
 # ╔═╡ 32ece1f3-6307-4910-8931-1e82de92ea86
+# ╠═╡ disabled = true
+#=╠═╡
 begin
 	p = (; restart_length = 90, max_restarts = 200, stop_accuracy = 10e-16, bound = false, exact = exact_input, min_decay = 0.95)
 
@@ -232,20 +253,35 @@ begin
 	
 	sol = funm_krylov_restart_full(exp, tLh, b, p)
 end
+  ╠═╡ =#
 
 # ╔═╡ 702a9e7d-c6be-428a-bda9-d8f480a30e92
+# ╠═╡ disabled = true
+#=╠═╡
 u = sol[1] - Ainvg
+  ╠═╡ =#
 
 # ╔═╡ b4d68cad-25a4-4c4a-96ce-940da79e4608
+# ╠═╡ disabled = true
+#=╠═╡
 exact_u = exact_input - (Lhinv * g)
+  ╠═╡ =#
 
 # ╔═╡ e62c3155-ecdd-4f95-8f25-67605bed451b
+# ╠═╡ disabled = true
+#=╠═╡
 norm(exact_u - u)
+  ╠═╡ =#
 
 # ╔═╡ e5d7b6a5-a72b-4768-8879-0eb19c623daa
+# ╠═╡ disabled = true
+#=╠═╡
 message(sol[2])
+  ╠═╡ =#
 
 # ╔═╡ b2c7122f-3af5-4aa7-b8c7-c6dc9433e525
+# ╠═╡ disabled = true
+#=╠═╡
 function benchmark_function(funm_krylov, f, A, b, Ainvg, ps, exact)
 
 	# Warm-up to avoid initial compile time
@@ -298,27 +334,41 @@ function benchmark_function(funm_krylov, f, A, b, Ainvg, ps, exact)
 	end
 	return times, allocs, errs, mvps, restarts, codes
 end
+  ╠═╡ =#
 
 # ╔═╡ 8f62ee16-3d29-4a97-9e41-99a753de50e0
+# ╠═╡ disabled = true
+#=╠═╡
 ps = [(; restart_length = m, max_restarts = 40, stop_accuracy = 1e-16, bound = true, exact = nothing, min_decay = 0.95) for m ∈ 30:10:200]
+  ╠═╡ =#
 
 # ╔═╡ 840783f0-6424-4ba0-9184-218547364c42
+# ╠═╡ disabled = true
+#=╠═╡
 ra_times, ra_allocs, ra_errs, ra_mvps, ra_restarts, ra_codes = benchmark_function(krylov_approx, r, tLh, b, Ainvg, ps, exact_u)
+  ╠═╡ =#
 
 # ╔═╡ e7514d9d-b500-4e2b-9ac8-9330032032b3
+# ╠═╡ disabled = true
+#=╠═╡
 full_times, full_allocs, full_errs, full_mvps, full_restarts, full_codes = benchmark_function(krylov_approx, exp, tLh, b, Ainvg, ps, exact_u)
+  ╠═╡ =#
 
 # ╔═╡ 3e45ed4d-b897-42ea-a915-aafa0464799f
+# ╠═╡ disabled = true
+#=╠═╡
 df_ra = DataFrame([ra_times,ra_allocs * 1e-6,ra_errs,[p.restart_length for p ∈ ps],ra_mvps,ra_restarts,ra_errs .< 1.0e-11,ra_codes],[:Times,:Allocations,:Absolute_Errors,:Restart_Length,:MVPs,:Num_Restarts,:converged,:codes])
+  ╠═╡ =#
 
 # ╔═╡ 3114b18a-2a61-459c-9724-4fe7d8ad86a5
+# ╠═╡ disabled = true
+#=╠═╡
 df_full = DataFrame([full_times,full_allocs * 1e-6,full_errs,[p.restart_length for p ∈ ps],full_mvps,full_restarts,full_errs .< 1.0e-11,full_codes],[:Times,:Allocations,:Absolute_Errors,:Restart_Length,:MVPs,:Num_Restarts,:converged,:codes])
-
-# ╔═╡ 56142d56-ad06-4550-901f-107358dfd02b
-plot_formula(df, xsymb, xname, ysymb, yname, c, ls, m, lbl) = data(df) * mapping(xsymb => xname, ysymb => yname) * (visual(Lines, color = c, linestyle = ls) + visual(Scatter, color = c, marker = m)) * visual(label = lbl)
-
+  ╠═╡ =#
 
 # ╔═╡ 2a091887-345e-49ff-bf3e-50e7bd05e2e5
+# ╠═╡ disabled = true
+#=╠═╡
 function plot_times(df1,df2,savefig=true)
 	df1_converged = subset(df1, :converged => c -> c)
 	df2_converged = subset(df2, :converged => c -> c)
@@ -353,8 +403,18 @@ function plot_times(df1,df2,savefig=true)
 	end
 	d
 end
+  ╠═╡ =#
+
+# ╔═╡ 56142d56-ad06-4550-901f-107358dfd02b
+# ╠═╡ disabled = true
+#=╠═╡
+plot_formula(df, xsymb, xname, ysymb, yname, c, ls, m, lbl) = data(df) * mapping(xsymb => xname, ysymb => yname) * (visual(Lines, color = c, linestyle = ls) + visual(Scatter, color = c, marker = m)) * visual(label = lbl)
+
+  ╠═╡ =#
 
 # ╔═╡ 40491f0b-dcc9-40fa-83b5-2e3b5210ff7a
+# ╠═╡ disabled = true
+#=╠═╡
 function plot_errs(df1,df2,savefig=false)
 	df1_converged = subset(df1, :converged => c -> c)
 	df2_converged = subset(df2, :converged => c -> c)
@@ -392,8 +452,11 @@ function plot_errs(df1,df2,savefig=false)
 	end
 	d
 end
+  ╠═╡ =#
 
 # ╔═╡ db1ba030-bb67-4b80-ba48-c616c2dade61
+# ╠═╡ disabled = true
+#=╠═╡
 function plot_allocations(df1,df2,savefig=false)
 	
 	df1_converged = subset(df1, :converged => c -> c)
@@ -430,17 +493,29 @@ function plot_allocations(df1,df2,savefig=false)
 	end
 	d
 end
+  ╠═╡ =#
 
 # ╔═╡ 59caf901-fe6d-48c2-89af-3e8fc24dc9a9
+# ╠═╡ disabled = true
+#=╠═╡
 plot_times(df_ra,df_full,true)
+  ╠═╡ =#
 
 # ╔═╡ 89f7b2b6-8f9d-4a92-9c79-caeac89cef2b
+# ╠═╡ disabled = true
+#=╠═╡
 plot_errs(df_ra,df_full,true)
+  ╠═╡ =#
 
 # ╔═╡ 15407ad2-b449-4d8a-85ba-3f8e433ecff5
+# ╠═╡ disabled = true
+#=╠═╡
 plot_allocations(df_ra,df_full,true)
+  ╠═╡ =#
 
 # ╔═╡ e0035f58-47d5-4885-ad05-ffe1b3fcdda9
+# ╠═╡ disabled = true
+#=╠═╡
 function build_df(ps,rs)
 	
 	mvps_exact = [k * ps[1].restart_length for k ∈ 1:length(rs[1].errs)]
@@ -452,8 +527,11 @@ function build_df(ps,rs)
 
 	return dfexact, dfupbnd, dflowbnd
 end
+  ╠═╡ =#
 
 # ╔═╡ 3c84faf8-5508-4efc-9a70-39a9ba7a077b
+# ╠═╡ disabled = true
+#=╠═╡
 function build_single_plot(dfs::Tuple{DataFrame,DataFrame,DataFrame},c1,c2,m1,m2,l1,l2)
 	plt1 = data(dfs[1]) * mapping(:MVPs,:Errors) * (visual(Lines, color = (c1,0.6)) + visual(Scatter, color = c1, marker= m1)) * visual(label = l1) 
 	plt2 = data(dfs[2]) * mapping(:MVPs,:Errors) * visual(Lines, linestyle=:dash) * visual(color = c2, label = l2)
@@ -461,8 +539,11 @@ function build_single_plot(dfs::Tuple{DataFrame,DataFrame,DataFrame},c1,c2,m1,m2
 	plt = plt2 + plt3 + plt1
 	return plt
 end
+  ╠═╡ =#
 
 # ╔═╡ f2e64cbd-8126-44ac-ab7f-8853143561d8
+# ╠═╡ disabled = true
+#=╠═╡
 function test_and_plot(r, f, A, b, restart_length, exact)
 	# Warm-up to avoid initial compile time
 	C = rand(ComplexF64,10,10)
@@ -522,37 +603,48 @@ function test_and_plot(r, f, A, b, restart_length, exact)
 		)
 
 end
+  ╠═╡ =#
 
 # ╔═╡ 43a0b7c0-ddec-416e-9128-562270f75e0a
+# ╠═╡ disabled = true
+#=╠═╡
 begin
 	plot1 = test_and_plot(r,exp,tLh,b,90,exact_input)
 	#save("AD_m90.png",plot1)
 end
+  ╠═╡ =#
 
 # ╔═╡ ede34636-3073-4a8a-9db9-82cee202d2f7
+# ╠═╡ disabled = true
+#=╠═╡
 begin
 	plot2 = test_and_plot(r,exp,tLh,b,60,exact_input)
 	#save("AD_m60.png",plot2)
 end
+  ╠═╡ =#
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"
+AppleAccelerate = "13e28ba4-7ad8-5781-acae-3021b1ed3924"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Ferrite = "c061ca5d-56c9-439f-9c0e-210fe06d3992"
 FerriteGmsh = "4f95f4f8-b27c-4ae5-9a39-ea55e634e36b"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
 AlgebraOfGraphics = "~0.12.0"
+AppleAccelerate = "~0.6.1"
 CairoMakie = "~0.15.8"
 DataFrames = "~1.8.1"
 Ferrite = "~1.2.0"
 FerriteGmsh = "~1.2.1"
+JLD2 = "~0.6.4"
 StaticArrays = "~1.9.16"
 """
 
@@ -560,9 +652,9 @@ StaticArrays = "~1.9.16"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.12.4"
+julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "df25ee29cf78c9913ddd9e278afa5b764da6d814"
+project_hash = "35f955b803aa00b6349421fd6412e84e9d495814"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -648,6 +740,16 @@ deps = ["Colors"]
 git-tree-sha1 = "e092fa223bf66a3c41f9c022bd074d916dc303e7"
 uuid = "27a7e980-b3e6-11e9-2bcd-0b925532e340"
 version = "0.4.2"
+
+[[deps.AppleAccelerate]]
+deps = ["Libdl", "LinearAlgebra", "SparseArrays"]
+git-tree-sha1 = "5b1c9beb861f21f62ce6e4466822df5836f4ac7d"
+uuid = "13e28ba4-7ad8-5781-acae-3021b1ed3924"
+version = "0.6.1"
+weakdeps = ["AbstractFFTs"]
+
+    [deps.AppleAccelerate.extensions]
+    AppleAccelerateAbstractFFTsExt = "AbstractFFTs"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -738,6 +840,23 @@ weakdeps = ["SparseArrays"]
 
     [deps.ChainRulesCore.extensions]
     ChainRulesCoreSparseArraysExt = "SparseArrays"
+
+[[deps.ChunkCodecCore]]
+git-tree-sha1 = "1a3ad7e16a321667698a19e77362b35a1e94c544"
+uuid = "0b6fb165-00bc-4d37-ab8b-79f91016dbe1"
+version = "1.0.1"
+
+[[deps.ChunkCodecLibZlib]]
+deps = ["ChunkCodecCore", "Zlib_jll"]
+git-tree-sha1 = "cee8104904c53d39eb94fd06cbe60cb5acde7177"
+uuid = "4c0bbee4-addc-4d73-81a0-b6caacae83c8"
+version = "1.0.0"
+
+[[deps.ChunkCodecLibZstd]]
+deps = ["ChunkCodecCore", "Zstd_jll"]
+git-tree-sha1 = "34d9873079e4cb3d0c62926a225136824677073f"
+uuid = "55437552-ac27-4d47-9aa3-63184e8fd398"
+version = "1.0.0"
 
 [[deps.CodecZlib]]
 deps = ["TranscodingStreams", "Zlib_jll"]
@@ -962,7 +1081,7 @@ uuid = "411431e0-e8b7-467b-b5e0-f676ba4f2910"
 version = "0.1.6"
 
 [[deps.FFMPEG_jll]]
-deps = ["Artifacts", "Bzip2_jll", "FreeType2_jll", "FriBidi_jll", "JLLWrappers", "LAME_jll", "Libdl", "Ogg_jll", "OpenSSL_jll", "Opus_jll", "PCRE2_jll", "Zlib_jll", "libaom_jll", "libass_jll", "libfdk_aac_jll", "libvorbis_jll", "x264_jll", "x265_jll"]
+deps = ["Artifacts", "Bzip2_jll", "FreeType2_jll", "FriBidi_jll", "JLLWrappers", "LAME_jll", "Libdl", "Ogg_jll", "OpenSSL_jll", "Opus_jll", "PCRE2_jll", "Zlib_jll", "libaom_jll", "libass_jll", "libfdk_aac_jll", "libva_jll", "libvorbis_jll", "x264_jll", "x265_jll"]
 git-tree-sha1 = "01ba9d15e9eae375dc1eb9589df76b3572acd3f2"
 uuid = "b22a6f82-2f65-5046-a5b2-351ab43fb4e5"
 version = "8.0.1+0"
@@ -1222,6 +1341,11 @@ git-tree-sha1 = "f923f9a774fcf3f5cb761bfa43aeadd689714813"
 uuid = "2e76f6c2-a576-52d4-95c1-20adfe4de566"
 version = "8.5.1+0"
 
+[[deps.HashArrayMappedTries]]
+git-tree-sha1 = "2eaa69a7cab70a52b9687c8bf950a5a93ec895ae"
+uuid = "076d061b-32b6-4027-95e0-9a2c6f6d7e74"
+version = "0.2.0"
+
 [[deps.Hwloc_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "92f65c4d78ce8cdbb6b68daf88889950b0a99d11"
@@ -1396,6 +1520,18 @@ version = "1.10.0"
 git-tree-sha1 = "a3f24677c21f5bbe9d2a714f95dcd58337fb2856"
 uuid = "82899510-4779-5014-852e-03e436cf321d"
 version = "1.0.0"
+
+[[deps.JLD2]]
+deps = ["ChunkCodecLibZlib", "ChunkCodecLibZstd", "FileIO", "MacroTools", "Mmap", "OrderedCollections", "PrecompileTools", "ScopedValues"]
+git-tree-sha1 = "941f87a0ae1b14d1ac2fa57245425b23a9d7a516"
+uuid = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+version = "0.6.4"
+
+    [deps.JLD2.extensions]
+    UnPackExt = "UnPack"
+
+    [deps.JLD2.weakdeps]
+    UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
 
 [[deps.JLLWrappers]]
 deps = ["Artifacts", "Preferences"]
@@ -2004,6 +2140,12 @@ git-tree-sha1 = "e24dc23107d426a096d3eae6c165b921e74c18e4"
 uuid = "fdea26ae-647d-5447-a871-4b548cad5224"
 version = "3.7.2"
 
+[[deps.ScopedValues]]
+deps = ["HashArrayMappedTries", "Logging"]
+git-tree-sha1 = "67a144433c4ce877ee6d1ada69a124d6b1ecf7be"
+uuid = "7e506255-f358-4e82-b7e4-beb19740aa63"
+version = "1.6.2"
+
 [[deps.Scratch]]
 deps = ["Dates"]
 git-tree-sha1 = "9b81b8393e50b7d4e6d0a9f14e192294d3b7c109"
@@ -2377,6 +2519,12 @@ git-tree-sha1 = "7ed9347888fac59a618302ee38216dd0379c480d"
 uuid = "ea2f1a96-1ddc-540d-b46f-429655e07cfa"
 version = "0.9.12+0"
 
+[[deps.Xorg_libpciaccess_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Zlib_jll"]
+git-tree-sha1 = "58972370b81423fc546c56a60ed1a009450177c3"
+uuid = "a65dc6b1-eb27-53a1-bb3e-dea574b5389e"
+version = "0.19.0+0"
+
 [[deps.Xorg_libxcb_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libXau_jll", "Xorg_libXdmcp_jll"]
 git-tree-sha1 = "bfcaf7ec088eaba362093393fe11aa141fa15422"
@@ -2435,6 +2583,12 @@ deps = ["Artifacts", "Libdl"]
 uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
 version = "5.15.0+0"
 
+[[deps.libdrm_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libpciaccess_jll"]
+git-tree-sha1 = "28e57478e8a160d346a19c28b3fffb9273bcc9c2"
+uuid = "8e53e030-5e6c-5a89-a30b-be5b7263a166"
+version = "2.4.134+0"
+
 [[deps.libfdk_aac_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "646634dd19587a56ee2f1199563ec056c5f228df"
@@ -2452,6 +2606,12 @@ deps = ["Artifacts", "JLLWrappers", "JpegTurbo_jll", "Libdl", "libpng_jll"]
 git-tree-sha1 = "c1733e347283df07689d71d61e14be986e49e47a"
 uuid = "075b6546-f08a-558a-be8f-8157d0f608a5"
 version = "1.10.5+0"
+
+[[deps.libva_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libX11_jll", "Xorg_libXext_jll", "Xorg_libXfixes_jll", "libdrm_jll"]
+git-tree-sha1 = "7dbf96baae3310fe2fa0df0ccbb3c6288d5816c9"
+uuid = "9a156e7d-b971-5f62-b2c9-67348b8fb97c"
+version = "2.23.0+0"
 
 [[deps.libvorbis_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Ogg_jll"]
@@ -2501,6 +2661,7 @@ version = "4.1.0+0"
 # ╠═b1859ec8-e38c-47ed-a8df-1a64614886bc
 # ╠═87fdd40e-59c2-4aed-8fea-11afb6287696
 # ╠═5074073b-61fa-4b0d-9595-b4d718de700b
+# ╠═9848b2a3-98dc-43ae-a296-13e94ffc4619
 # ╠═a347acef-234c-4f3e-aeee-c1491cf543d0
 # ╠═10499a9c-56db-4bf0-b665-a23e5a4af941
 # ╠═c5d411a5-0797-44bf-a075-14da6bdff7cd

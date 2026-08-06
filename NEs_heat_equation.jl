@@ -14,8 +14,10 @@ begin
 	using DataFrames
 	using KrylovKit
 
+	using JLD2
+
 	# enable if using a Mac
-	#using AppleAccelerate # Use Apple accelerate BLAS & LAPACK
+	using AppleAccelerate # Use Apple accelerate BLAS & LAPACK
 	
 	push!(LOAD_PATH, joinpath(@__DIR__, "KrylovRestart"))
 	using KrylovRestart
@@ -45,6 +47,12 @@ begin
 		
 		Lh = (1/h^2)*(T⊗Id⊗Id + Id⊗T⊗Id + Id⊗Id⊗T) 
 end
+
+# ╔═╡ 393218d7-8638-4f59-bb4c-7de4355d7f5a
+# ╠═╡ disabled = true
+#=╠═╡
+@save "3Dheat_equation_laplacian_50.jld2" Lh
+  ╠═╡ =#
 
 # ╔═╡ 5b79b13d-2e93-4392-954b-b08cbaebf826
 function eigenfuncs_initial_vec(n1::Int)	
@@ -79,12 +87,20 @@ begin
 end
 
 # ╔═╡ 840171a2-6bf8-498d-b6dc-1a65832728ba
+# ╠═╡ disabled = true
+#=╠═╡
 p = (; restart_length = 100, max_restarts = 200, stop_accuracy = 1e-16, bound = true, exact = nothing, min_decay = 0.95)
+  ╠═╡ =#
 
 # ╔═╡ 5d21711c-6749-4c2a-be35-945596799fe5
+# ╠═╡ disabled = true
+#=╠═╡
 ps = [(; restart_length = m, max_restarts = 200, stop_accuracy = 1e-16, bound = true, exact = nothing, min_decay = 0.95) for m ∈ 20:2:100]
+  ╠═╡ =#
 
 # ╔═╡ 0b59db71-7742-40d9-a3a3-791d427d383f
+# ╠═╡ disabled = true
+#=╠═╡
 begin
 	r = bestapprox_expm_data(16)
 	
@@ -116,8 +132,11 @@ begin
 		return fk, tr.stop, tr
 	end
 end
+  ╠═╡ =#
 
 # ╔═╡ 3bf491dd-0dfc-4b35-8700-e7b36f33349b
+# ╠═╡ disabled = true
+#=╠═╡
 function benchmark_function(funm_krylov, f, A, b, ps, exact)
 
 	# Warm-up to avoid initial compile time
@@ -167,20 +186,35 @@ function benchmark_function(funm_krylov, f, A, b, ps, exact)
 	end
 	return times, allocs, errs, mvps, restarts
 end
+  ╠═╡ =#
 
 # ╔═╡ 33bfe229-97a7-4a6e-bab0-c79667ecf783
+# ╠═╡ disabled = true
+#=╠═╡
 ra_times,ra_allocs,ra_errs,ra_mvps,ra_restarts = benchmark_function(krylov_approx, r, tLh, u0, ps, exact)
+  ╠═╡ =#
 
 # ╔═╡ d2b073a4-e592-499a-850d-d5d19f1a3934
+# ╠═╡ disabled = true
+#=╠═╡
 full_times,full_allocs,full_errs,full_mvps,full_restarts = benchmark_function(krylov_approx, exp, tLh, u0, ps, exact)
+  ╠═╡ =#
 
 # ╔═╡ fecf35f6-ff24-4efe-b270-6d706a0ade64
+# ╠═╡ disabled = true
+#=╠═╡
 df_ra = DataFrame([ra_times,ra_allocs * 1e-6,ra_errs,[p.restart_length for p ∈ ps],ra_mvps,ra_restarts],[:Times,:Allocations,:Absolute_Errors,:Restart_Length,:MVPs,:Restarts])
+  ╠═╡ =#
 
 # ╔═╡ 135da3df-c2be-4ed0-b03b-440a9edcb25f
+# ╠═╡ disabled = true
+#=╠═╡
 df_full = DataFrame([full_times,full_allocs * 1e-6,full_errs,[p.restart_length for p ∈ ps],full_mvps,full_restarts],[:Times,:Allocations,:Absolute_Errors,:Restart_Length,:MVPs,:Restarts])
+  ╠═╡ =#
 
 # ╔═╡ 9521b12a-5fb4-45f2-a3fe-3cf28227449d
+# ╠═╡ disabled = true
+#=╠═╡
 function plot_times(df1,df2,savefig=true)
 	
 	plt1 = data(df1) * mapping(:Restart_Length => "Restart Length",:Times => "Time (s)") * (smooth() + visual(Scatter, marker=:x) ) * visual(color = :cornflowerblue,  label = "R.A.")
@@ -203,11 +237,17 @@ function plot_times(df1,df2,savefig=true)
 	end
 	d
 end
+  ╠═╡ =#
 
 # ╔═╡ ffb0746b-b236-48b9-90ac-87c68369ada0
+# ╠═╡ disabled = true
+#=╠═╡
 plot_times(df_ra,df_full,false)
+  ╠═╡ =#
 
 # ╔═╡ 4fd84014-784a-41f8-85d2-e58874bd675a
+# ╠═╡ disabled = true
+#=╠═╡
 function plot_errs(df1,df2,savefig=false)
 	
 	plt1 = data(df1) * mapping(:Restart_Length => "Restart Length",:Absolute_Errors => "Abs. Error") * (visual(Scatter, marker=:x) ) * visual(color = :cornflowerblue,  label = "R.A.")
@@ -231,11 +271,17 @@ function plot_errs(df1,df2,savefig=false)
 	end
 	d
 end
+  ╠═╡ =#
 
 # ╔═╡ bb593070-68fc-442b-97a9-5f1ab8e0d66f
+# ╠═╡ disabled = true
+#=╠═╡
 plot_errs(df_ra,df_full,false)
+  ╠═╡ =#
 
 # ╔═╡ 41ee5b8e-ebb6-4fb9-9abf-40e64db155ae
+# ╠═╡ disabled = true
+#=╠═╡
 function plot_allocations(df1,df2,savefig=false)
 	plt1 = data(df1) * mapping(:Restart_Length => "Restart Length",:Allocations => "Allocations (mb)") * (visual(Scatter, marker=:x) ) * visual(color = :cornflowerblue,  label = "R.A.")
 
@@ -256,11 +302,17 @@ function plot_allocations(df1,df2,savefig=false)
 	end
 	d
 end
+  ╠═╡ =#
 
 # ╔═╡ 1c3a66a1-109d-407e-8a31-87754fb584f2
+# ╠═╡ disabled = true
+#=╠═╡
 plot_allocations(df_ra,df_full,false)
+  ╠═╡ =#
 
 # ╔═╡ ed18a413-19c0-476c-bb4c-0c76d2731190
+# ╠═╡ disabled = true
+#=╠═╡
 function plot_restarts(df1,df2,savefig=false)
 	plt1 = data(df1) * mapping(:Restart_Length => "Restart Length",:Restarts => "Restarts Needed") * (visual(Scatter, marker=:x) ) * visual(color = :cornflowerblue,  label = "R.A.")
 
@@ -281,11 +333,17 @@ function plot_restarts(df1,df2,savefig=false)
 	end
 	d
 end
+  ╠═╡ =#
 
 # ╔═╡ 92450224-1ad7-4414-ba33-63ca926779d3
+# ╠═╡ disabled = true
+#=╠═╡
 plot_restarts(df_ra,df_full,false)
+  ╠═╡ =#
 
 # ╔═╡ da71ad33-ffd0-44af-b78b-883fb1e387c3
+# ╠═╡ disabled = true
+#=╠═╡
 function build_df(ps,rs)
 	
 	mvps_exact = [k * ps[1].restart_length for k ∈ 1:length(rs[1].errs)]
@@ -297,8 +355,11 @@ function build_df(ps,rs)
 
 	return dfexact, dfupbnd, dflowbnd
 end
+  ╠═╡ =#
 
 # ╔═╡ 6f41b045-e8ea-494e-9895-9a42bcd215fd
+# ╠═╡ disabled = true
+#=╠═╡
 function build_single_plot(dfs::Tuple{DataFrame,DataFrame,DataFrame},c1,c2,m1,m2,l1,l2)
 	plt1 = data(dfs[1]) * mapping(:MVPs,:Errors) * (visual(Lines, color = (c1,0.6)) + visual(Scatter, color = c1, marker= m1)) * visual(label = l1) 
 	plt2 = data(dfs[2]) * mapping(:MVPs,:Errors) * visual(Lines, linestyle=:dash) * visual(color = c2, label = l2)
@@ -306,8 +367,11 @@ function build_single_plot(dfs::Tuple{DataFrame,DataFrame,DataFrame},c1,c2,m1,m2
 	plt = plt2 + plt3 + plt1
 	return plt
 end
+  ╠═╡ =#
 
 # ╔═╡ cc4b2c81-c6a5-4df1-bdf4-508fe898718a
+# ╠═╡ disabled = true
+#=╠═╡
 function test_and_plot(r, f, A, b, restart_length, exact)
 	# Warm-up to avoid initial compile time
 	C = rand(ComplexF64,10,10)
@@ -366,16 +430,22 @@ function test_and_plot(r, f, A, b, restart_length, exact)
 		)
 
 end
+  ╠═╡ =#
 
 # ╔═╡ 39584447-b782-48b4-a106-39dc43c9f6a8
+# ╠═╡ disabled = true
+#=╠═╡
 begin
 	mval = 50
 	plot = test_and_plot(r,exp,tLh,u0,mval,exact)
 	#save("plots/HE_test_newcode_m$(mval).png", plot)
 	plot
 end
+  ╠═╡ =#
 
 # ╔═╡ 72fe7f36-551e-436d-b7a4-fc572dc3c502
+# ╠═╡ disabled = true
+#=╠═╡
 begin
 	approx_ra = funm_krylov_restart_ra(r,tLh,u0,p)
 	approx_full = funm_krylov_restart_full(exp,tLh,u0,p)
@@ -384,13 +454,16 @@ begin
 	rel_err_ra = abs_err_ra/norm(exact)
 	rel_err_full = abs_err_full/norm(exact)
 end
+  ╠═╡ =#
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"
+AppleAccelerate = "13e28ba4-7ad8-5781-acae-3021b1ed3924"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 KrylovKit = "0b1a1467-8014-51b9-945f-bf0ae24f4b77"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
@@ -398,8 +471,10 @@ Tullio = "bc48ee85-29a4-5162-ae0b-a64e1601d4bc"
 
 [compat]
 AlgebraOfGraphics = "~0.11.9"
+AppleAccelerate = "~0.6.1"
 CairoMakie = "~0.15.6"
 DataFrames = "~1.8.1"
+JLD2 = "~0.6.4"
 KrylovKit = "~0.10.2"
 Tullio = "~0.3.8"
 """
@@ -410,7 +485,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "3ffca3f9beff64050003085d8f877f11e5a0c2de"
+project_hash = "520554d6d423f0928aacd01be455635d0f0e8f7d"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -493,6 +568,16 @@ deps = ["Colors"]
 git-tree-sha1 = "e092fa223bf66a3c41f9c022bd074d916dc303e7"
 uuid = "27a7e980-b3e6-11e9-2bcd-0b925532e340"
 version = "0.4.2"
+
+[[deps.AppleAccelerate]]
+deps = ["Libdl", "LinearAlgebra", "SparseArrays"]
+git-tree-sha1 = "5b1c9beb861f21f62ce6e4466822df5836f4ac7d"
+uuid = "13e28ba4-7ad8-5781-acae-3021b1ed3924"
+version = "0.6.1"
+weakdeps = ["AbstractFFTs"]
+
+    [deps.AppleAccelerate.extensions]
+    AppleAccelerateAbstractFFTsExt = "AbstractFFTs"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -583,6 +668,23 @@ weakdeps = ["SparseArrays"]
 
     [deps.ChainRulesCore.extensions]
     ChainRulesCoreSparseArraysExt = "SparseArrays"
+
+[[deps.ChunkCodecCore]]
+git-tree-sha1 = "1a3ad7e16a321667698a19e77362b35a1e94c544"
+uuid = "0b6fb165-00bc-4d37-ab8b-79f91016dbe1"
+version = "1.0.1"
+
+[[deps.ChunkCodecLibZlib]]
+deps = ["ChunkCodecCore", "Zlib_jll"]
+git-tree-sha1 = "cee8104904c53d39eb94fd06cbe60cb5acde7177"
+uuid = "4c0bbee4-addc-4d73-81a0-b6caacae83c8"
+version = "1.0.0"
+
+[[deps.ChunkCodecLibZstd]]
+deps = ["ChunkCodecCore", "Zstd_jll"]
+git-tree-sha1 = "34d9873079e4cb3d0c62926a225136824677073f"
+uuid = "55437552-ac27-4d47-9aa3-63184e8fd398"
+version = "1.0.0"
 
 [[deps.ColorBrewer]]
 deps = ["Colors", "JSON"]
@@ -980,6 +1082,11 @@ git-tree-sha1 = "f923f9a774fcf3f5cb761bfa43aeadd689714813"
 uuid = "2e76f6c2-a576-52d4-95c1-20adfe4de566"
 version = "8.5.1+0"
 
+[[deps.HashArrayMappedTries]]
+git-tree-sha1 = "2eaa69a7cab70a52b9687c8bf950a5a93ec895ae"
+uuid = "076d061b-32b6-4027-95e0-9a2c6f6d7e74"
+version = "0.2.0"
+
 [[deps.HypergeometricFunctions]]
 deps = ["LinearAlgebra", "OpenLibm_jll", "SpecialFunctions"]
 git-tree-sha1 = "68c173f4f449de5b438ee67ed0c9c748dc31a2ec"
@@ -1149,6 +1256,18 @@ version = "1.10.0"
 git-tree-sha1 = "a3f24677c21f5bbe9d2a714f95dcd58337fb2856"
 uuid = "82899510-4779-5014-852e-03e436cf321d"
 version = "1.0.0"
+
+[[deps.JLD2]]
+deps = ["ChunkCodecLibZlib", "ChunkCodecLibZstd", "FileIO", "MacroTools", "Mmap", "OrderedCollections", "PrecompileTools", "ScopedValues"]
+git-tree-sha1 = "941f87a0ae1b14d1ac2fa57245425b23a9d7a516"
+uuid = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+version = "0.6.4"
+
+    [deps.JLD2.extensions]
+    UnPackExt = "UnPack"
+
+    [deps.JLD2.weakdeps]
+    UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
 
 [[deps.JLLWrappers]]
 deps = ["Artifacts", "Preferences"]
@@ -1690,6 +1809,12 @@ git-tree-sha1 = "e24dc23107d426a096d3eae6c165b921e74c18e4"
 uuid = "fdea26ae-647d-5447-a871-4b548cad5224"
 version = "3.7.2"
 
+[[deps.ScopedValues]]
+deps = ["HashArrayMappedTries", "Logging"]
+git-tree-sha1 = "67a144433c4ce877ee6d1ada69a124d6b1ecf7be"
+uuid = "7e506255-f358-4e82-b7e4-beb19740aa63"
+version = "1.6.2"
+
 [[deps.Scratch]]
 deps = ["Dates"]
 git-tree-sha1 = "9b81b8393e50b7d4e6d0a9f14e192294d3b7c109"
@@ -2158,6 +2283,7 @@ version = "4.1.0+0"
 # ╠═80f9f488-d04f-11f0-8876-81651ac36016
 # ╠═fb9e9455-5971-4477-9046-b0fe977a93ba
 # ╠═d1af3cc5-f015-47ea-b095-ece3ae900f53
+# ╠═393218d7-8638-4f59-bb4c-7de4355d7f5a
 # ╠═5b79b13d-2e93-4392-954b-b08cbaebf826
 # ╠═91861fc6-920e-40cf-96bc-25950a76118c
 # ╠═5a301749-be5f-47f5-816c-092b8af79499

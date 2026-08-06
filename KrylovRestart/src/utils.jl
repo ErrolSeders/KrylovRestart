@@ -4,54 +4,27 @@ function unit_vector(T::Type, size::Int, pos::Int)
     return unit
 end
 
-@enum StopCode begin
-    MaxRestarts #0
-    AbsErrAcc #1
-    UpBndAcc #2
-    AbsErrLinConv #3
-    UpBndLinConv #4
-    UpdateAcc #5
-    IndicatorAcc #6
-end
-
-message(::Val{MaxRestarts}) = "Maximum number of restarts reached."
-message(::Val{AbsErrAcc}) = "Absolute error below stopping accuracy."
-message(::Val{UpBndAcc}) = "Upper bound below stopping accuracy."
-message(::Val{AbsErrLinConv}) = "Linear convergence rate of absolute error greater than minimum decay."
-message(::Val{UpBndLinConv}) = "Linear convergence rate upper bound greater than minimum decay."
-message(::Val{UpdateAcc}) = "Norm of updates below stopping accuracy."
-message(::Val{IndicatorAcc}) = "Error Indicator below stopping accuracy"
-message(::Val{M}) where {M} = "Invalid stop code encountered! This should never happen!"
-message(c::StopCode) = message(Val(c))
-
-"""Optional collector for convergence statistics (one entry per restart)."""
-mutable struct Trace
-    num_restarts::Int
-    stop::Union{Nothing, StopCode}
-    data::Dict{String, AbstractVector}
-end
-
 function Base.show(io::IO, tr::Trace)
-    print(io, "Trace(restarts=$(tr.num_restarts), stop=$(isnothing(tr.stop) ? "nothing" : tr.stop), metrics=$(length(tr.data)))")
+    return print(io, "Trace(restarts=$(tr.restarts), stop=$(isnothing(tr.stop) ? "nothing" : tr.stop), metrics=$(length(tr.metrics)))")
 end
 
 function Base.show(io::IO, ::MIME"text/plain", tr::Trace)
     println(io, "Trace")
-    println(io, "  restarts: ", tr.num_restarts)
+    println(io, "  restarts: ", tr.restarts)
     if isnothing(tr.stop)
         println(io, "  stop: not set")
     else
         println(io, "  stop: ", tr.stop, " — ", message(tr.stop))
     end
 
-    if isempty(tr.data)
+    if isempty(tr.metrics)
         print(io, "  metrics: (none)")
         return
     end
 
     println(io, "  metrics:")
     for key in sort!(collect(keys(tr.data)))
-        values = tr.data[key]
+        values = tr.metrics[key]
         n = length(values)
         print(io, "    - ", key, ": ", n, " entr", n == 1 ? "y" : "ies")
         if n > 0
@@ -59,23 +32,8 @@ function Base.show(io::IO, ::MIME"text/plain", tr::Trace)
         end
         println(io)
     end
+    return
 end
-
-function reset!(tr::Trace)
-    tr.num_restarts = 0
-    tr.stop = nothing
-    empty!(tr.data)
-    return tr
-end
-
-set_restart!(::Nothing, _k) = nothing
-set_restart!(tr::Trace, k) = (tr.num_restarts = k)
-
-set_stop!(::Nothing, _stop::StopCode) = nothing
-set_stop!(tr::Trace, stop::StopCode) = (tr.stop = stop)
-
-log_item!(::Nothing, item_name, _x) = nothing
-log_item!(tr::Trace, item_name, value) = push!(get!(tr.data, item_name, typeof(value)[]), value)
 
 """
 Checks whether the entries of v are of the form 1,...,1,0,...0,1,1 (i.e., last two entries are true/1, but not all entries are true/1)
@@ -142,17 +100,16 @@ function stop_conditions!(
         err_decay::DecayTracker
     )::Union{StopCode, Nothing}
 
-    not_using_exact = exact === nothing || isempty(exact)
+    using_exact = !(exact === nothing || isempty(exact))
 
-    if bound
+    function bound_check!(stop)
         low = β * abs(h[end - 1])
         w = A * qm
         up = β * norm((h[end - 1] - α1 * h[end]) * qm + h[end] * w)
 
-        log_item!(trace, "low_bnd", low)
-        log_item!(trace, "up_bnd", up)
+        log_metric!(trace, :low_bnd, low)
+        log_metric!(trace, :up_bnd, up)
 
-        stop = nothing
         if update_decay!(up_decay, up, min_decay)
             stop = UpBndLinConv
         elseif up < tol
@@ -160,12 +117,12 @@ function stop_conditions!(
         end
 
         return stop
+    end
 
-    elseif !not_using_exact
+    function abs_err_check!(stop)
         err = norm(fk - exact)
-        log_item!(trace, "abs_err", err)
+        log_metric!(trace, :abs_err, err)
 
-        stop = nothing
         if update_decay!(err_decay, err, min_decay)
             stop = AbsErrLinConv
         elseif err < tol
@@ -173,13 +130,32 @@ function stop_conditions!(
         end
 
         return stop
+    end
 
-    else
+    function update_norm_check!(stop)
         update_norm = β * norm(h[1:m])
-        log_update_norm!(trace, "update_norm", update_norm)
+        log_metric!(trace, :update_norm, update_norm)
 
-        stop = update_norm < tol ? UpdateAcc : nothing
+        if update_norm < tol
+            stop = UpdateAcc
+        end
 
         return stop
     end
+
+    stop = nothing
+
+    if using_exact && bound
+        stop = bound_check!(stop)
+        abs_err_check!(stop)
+    elseif !using_exact && bound
+        stop = bound_check!(stop)
+    elseif using_exact
+        stop = abs_err_check!(stop)
+    else
+        update_norm_check!(stop)
+
+    end
+
+    return stop
 end
